@@ -1,7 +1,7 @@
 import tensorflow as tf
 import numpy as np
 import argparse
-
+import os
 
 class Config:
     def __init__(self):
@@ -12,11 +12,17 @@ class Config:
         self.state_size = 2
         self.hidden_size = 7
         self.days = 100
-        self.name = 'p20'
+        self.name = 'p22'
         self.save_path = 'models/{name}/{name}'.format(name=self.name)
         self.logdir = 'logs/{name}/'.format(name=self.name)
         self.lr = 0.0002
         self.epoches = 10
+        self.gpu = self._get_gpu()
+
+
+    def _get_gpu(self):
+        value = os.getenv('CUDA_VISIBLE_DEVICES', '0,4')
+        return len(value.split(','))
 
     def from_cmd_line(self):
         attrs = self._get_attrs()
@@ -58,30 +64,66 @@ class Config:
 class Tensors:
     def __init__(self, config: Config):
         self.config = config
+        self.sub_tensors = []
         with tf.device('/gpu:0'):
             self.lr = tf.placeholder(tf.float32, [], 'lr')
-            self.x = tf.placeholder(tf.float32, [config.num_step, None], 'x')#num_step, stock_num
-            self.y = tf.placeholder(tf.float32, [None], 'y')#stock_num
+            opt = tf.train.AdamOptimizer(self.lr)
+
+        with tf.variable_scope('stock'):
+            for gpu_index in range(config.gpu):
+                self.sub_tensors.append(Sub_tensor(gpu_index, config, opt))
+                tf.get_variable_scope().reuse_variables()
+
+        with tf.device('/gpu:0'):
+            grads = self.merge_grad()
+            self.train_op = opt.apply_gradients(grads)
+            self.loss = tf.reduce_mean([ts.loss for ts in self.sub_tensors])
+            tf.summary.scalar('loss', self.loss)
+            self.summary_op = tf.summary.merge_all()
+
+    def merge_grad(self):
+        grads = {}
+        for ts in self.sub_tensors:
+            for g, v in ts.grad:
+                if v not in grads:
+                    grads[v] = []
+                grads[v].append(g)
+
+        # for v in grads:
+        #     print(grads[v])
+        #[(g, v), (g, v)-------]
+        result_grads = [(tf.reduce_mean(grads[v], axis = 0), v) for v in grads]
+        return result_grads
+
+
+
+
+
+class Sub_tensor:
+    def __init__(self, gpu_index, config: Config, opt: tf.train.AdamOptimizer):
+        with tf.device('/gpu:%d' % gpu_index):
+            self.x = tf.placeholder(tf.float32, [config.num_step, None], 'x')  # num_step, stock_num
+            self.y = tf.placeholder(tf.float32, [None], 'y')  # stock_num
 
             cell = MyCell(config.hidden_size, config.state_size)
-            #state = cell.zero_state(config.stock_num)
+            # state = cell.zero_state(config.stock_num)
             state = cell.zero_state(tf.shape(self.x)[1])
 
             with tf.variable_scope('rnn'):
                 for i in range(config.num_step):
-                    xi = self.x[i]#[stock_num]
-                    xi = tf.reshape(xi, [-1, 1])#[stock_num, 1]
+                    xi = self.x[i]  # [stock_num]
+                    xi = tf.reshape(xi, [-1, 1])  # [stock_num, 1]
                     state = cell(xi, state, 'my_cell')
                     tf.get_variable_scope().reuse_variables()
 
-            y_predict = tf.layers.dense(state, 1, name = 'dense')#stock_num, 1
-            self.y_predict = tf.reshape(y_predict, [-1])#stock_num
+            y_predict = tf.layers.dense(state, 1, name='dense')  # stock_num, 1
+            self.y_predict = tf.reshape(y_predict, [-1])  # stock_num
 
             self.loss = tf.reduce_mean(tf.abs(self.y - self.y_predict))
-            self.train_op = tf.train.AdamOptimizer(self.lr).minimize(self.loss)
+            #[(g, v), (g, v)-------]
+            self.grad = opt.compute_gradients(self.loss)
+            # print(len(self.grad))
 
-            tf.summary.scalar('loss', self.loss)
-            self.summary_op = tf.summary.merge_all()
 
 
 class MyCell:
@@ -147,19 +189,22 @@ class Stock:
 
         for epoch in range(cfg.epoches):
             for batch in range(self.samples.num()):
-                x, y = self.samples.next_batch()
+
                 feed_dict = {
                     self.tensors.lr: cfg.lr,
-                    self.tensors.x: x,
-                    self.tensors.y: y
                 }
+                for gpu_index in range(config.gpu):
+                    x, y = self.samples.next_batch()
+                    feed_dict[self.tensors.sub_tensors[gpu_index].x] = x
+                    feed_dict[self.tensors.sub_tensors[gpu_index].y] = y
+
                 _, loss, su= self.session.run([self.tensors.train_op, self.tensors.loss, self.tensors.summary_op],
                                                feed_dict)
                 writer.add_summary(su, epoch * self.samples.num() + batch)
-                print('%d/%d: loss=%.8f' % (batch, epoch, loss))
+                #print('%d/%d: loss=%.8f' % (batch, epoch, loss))
                 #print('%d/%d: %d' % (batch, epoch, y.shape[0]))
             self.saver.save(self.session, cfg.save_path)
-            print('Save the mode into ', cfg.save_path)
+            #print('Save the mode into ', cfg.save_path)
 
 
     def close(self):
