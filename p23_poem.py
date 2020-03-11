@@ -251,7 +251,7 @@ class Poem:
         if head is None:
             head = self.samples.get_random_char()
         head = self.samples.encode(head)
-
+        
         result = head
         state = self.session.run([self.tensors.sub_tensors[0].input_state], {self.tensors.sub_tensors[0].batch_size:1})
         y_predict = None
