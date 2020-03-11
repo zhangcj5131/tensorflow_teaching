@@ -202,9 +202,9 @@ class Stock:
                                                feed_dict)
                 writer.add_summary(su, epoch * self.samples.num() + batch)
                 #print('%d/%d: loss=%.8f' % (batch, epoch, loss))
-                #print('%d/%d: %d' % (batch, epoch, y.shape[0]))
+                print('%d/%d: %d' % (batch, epoch, y.shape[0]))
             self.saver.save(self.session, cfg.save_path)
-            #print('Save the mode into ', cfg.save_path)
+            print('Save the mode into ', cfg.save_path)
 
 
     def close(self):
