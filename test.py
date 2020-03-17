@@ -346,10 +346,14 @@ if __name__ == '__main__':
     # for poem in ch.poems:
     #     print(poem)
 
+    # s = Samples(config)
+    # print(s.ch_map['我'])
+
     poem = Poem(config)
+    print(poem.predict('我'))
 
-    # print(poem.predict('我是中国人'))
 
-    poem.train()
-    poem.close()
-    print('Finished!')
+
+    # poem.train()
+    # poem.close()
+    # print('Finished!')

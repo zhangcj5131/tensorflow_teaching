@@ -6,7 +6,7 @@ import os
 
 class Config:
     def __init__(self):
-        self.batch_size = 2
+        self.batch_size = 50
         self.num_step = 8 * 4
         self.num_units = 200
         self.gpus = self.get_gpus()
@@ -18,7 +18,7 @@ class Config:
         self.logdir = 'logs/{name}/'.format(name=self.name)
 
         self.lr = 0.0002
-        self.epoches = 200
+        self.epoches = 100
 
     def get_gpus(self):
         value = os.getenv('CUDA_VISIBLE_DEVICES', '0')
@@ -89,10 +89,20 @@ class Sub_tensors:
             char_dict = tf.get_variable('char_dict', [char_size, config.num_units], tf.float32)#4000, 200
             x = tf.nn.embedding_lookup(char_dict, self.x)#-1, 32, 200
 
+
+
             cell1 = tf.nn.rnn_cell.BasicLSTMCell(config.num_units, state_is_tuple=True, name = 'lstm1')
             cell2 = tf.nn.rnn_cell.BasicLSTMCell(config.num_units, state_is_tuple=True, name='lstm2')
-
             cell = tf.nn.rnn_cell.MultiRNNCell([cell1, cell2])
+
+            # cell1 = MyLSTM(config.num_units, name = 'lstm1')
+            # cell2 = MyLSTM(config.num_units, name='lstm2')
+            # cell = MyMultiLSTM([cell1, cell2])
+
+
+
+
+
 
             batch_size_tf = tf.shape(self.x)[0]
             state = cell.zero_state(batch_size_tf, tf.float32)
@@ -134,6 +144,60 @@ class Sub_tensors:
                 self.y_predict = tf.math.argmax(y_predict, axis = 1)
 
 
+
+
+class MyMultiLSTM:
+    def __init__(self, cells):
+        self.cells = cells
+
+    def zero_state(self, batch_size, dtype = tf.float32):
+        state = [cell.zero_state(batch_size, dtype) for cell in self.cells]#[(c,h), (c,h), (c, h)----]
+        return state
+
+    def __call__(self, xi, state):
+        new_states = []
+        id = 0
+        for st, cell in zip(state, self.cells):
+            with tf.variable_scope('cell_%d' % id):
+                xi, new_state = cell(xi, st)
+            id += 1
+            new_states.append(new_state)
+        return xi, new_states
+
+
+
+
+class MyLSTM:
+    def __init__(self, num_units, name):
+        self.num_units = num_units
+        self.name = name
+
+    def zero_state(self, batch_size, dtype=tf.float32):
+        c =  tf.zeros([batch_size, self.num_units], dtype)
+        h = tf.zeros([batch_size, self.num_units], dtype)
+        return [c, h]
+
+    def __call__(self, xi, state):
+        with tf.variable_scope(self.name):
+            intput_gate = self._gate(xi, state[1], 'intput_gate')
+            output_gate = self._gate(xi, state[1], 'output_gate')
+            forget_gate = self._gate(xi, state[1], 'forget_gate')
+
+            xi = tf.nn.tanh(self._full_connect(xi, state[1], 'fc_input'))
+            c = forget_gate * state[0] + intput_gate * xi
+            h = output_gate * tf.nn.tanh(c)
+
+            new_state = [c, h]
+            return h, new_state
+
+    def _gate(self, c, h, name):
+        with tf.variable_scope(name):
+            return tf.nn.sigmoid(self._full_connect(c, h, 'fc'))
+
+    def _full_connect(self, c, h, name):
+        with tf.variable_scope(name):
+            x = tf.concat([c, h], axis = 1)
+            return tf.layers.dense(x, self.num_units, name = 'dense')
 
 
 
@@ -278,7 +342,7 @@ if __name__ == '__main__':
     s = Samples(config)
     # Tensors(config, s.char_size)
     poem = Poem(config)
-    # poem.train()
+    poem.train()
     print(poem.predict())
     poem.close()
 
