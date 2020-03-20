@@ -298,12 +298,12 @@ class Poem:
                 for gpu_index in range(config.gpus):
                     x = self.samples.next_batch(config.batch_size)
                     feed_dict[self.tensors.sub_tensors[gpu_index].x] = x
-                    _, loss, precise, su = self.session.run([self.tensors.train_op,
-                                      self.tensors.loss,
-                                      self.tensors.precise,
-                                      self.tensors.summary_op], feed_dict)
-                    self.file_write.add_summary(su, epoch*batches + batch)
-                    print('%d/%d, loss = %f, precise = %f' % (epoch, batch, loss, precise))
+                _, loss, precise, su = self.session.run([self.tensors.train_op,
+                              self.tensors.loss,
+                              self.tensors.precise,
+                              self.tensors.summary_op], feed_dict)
+                self.file_write.add_summary(su, epoch*batches + batch)
+                print('%d/%d, loss = %f, precise = %f' % (epoch, batch, loss, precise))
             self.saver.save(self.session, config.save_path)
 
     def close(self):
