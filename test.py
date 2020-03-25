@@ -1,19 +1,21 @@
 import tensorflow as tf
 import numpy as np
-import argparse
 import os
+import argparse
 
 
 class Config:
     def __init__(self):
-        self.batch_size = 2
-        self.num_step = 8 * 4
+        self.batch_size = 20
+        self.num_step1 = 8
+        self.num_step2 = 10
         self.num_units = 5
-        self.gpus = self.get_gpus()
-        self.classes = 4
-        self.ch_size = 200
 
-        self.name = 'p25'
+        self.gpus = self.get_gpus()
+        self.ch_size = 200
+        self.en_size = 100
+
+        self.name = 'p26'
         self.save_path = 'models/{name}/{name}'.format(name=self.name)
         self.logdir = 'logs/{name}/'.format(name=self.name)
 
@@ -61,6 +63,19 @@ class Tensors:
             tf.summary.scalar('loss', self.loss)
             self.summary_op = tf.summary.merge_all()
 
+        total = 0
+        for var in tf.trainable_variables():
+            num = self.get_param_num(var.shape)
+            print(var.name, var.shape, num)
+            total += num
+        print('Total params:', total)
+
+    def get_param_num(self, shape):
+        num = 1
+        for sh in shape:
+            num *= sh.value
+        return num
+
     def merge_grads(self):
         indexed_grads = {}
         grads = {}
@@ -89,56 +104,64 @@ class Tensors:
 class SubTensors:
     def __init__(self, config, gpu_index, opt):
         with tf.device('/gpu:%d' % gpu_index):
-            self.x = tf.placeholder(tf.int32, [None, config.num_step], 'x')
+            self.x = tf.placeholder(tf.int32, [None, config.num_step1], 'x')
+            self.y = tf.placeholder(tf.int32, [None, config.num_step2], 'y')
 
-            # word2vec
-            ch_dict = tf.get_variable('ch_dict', [config.ch_size, config.num_units], tf.float32)
-            x = tf.nn.embedding_lookup(ch_dict, self.x)  # [-1, num_step, num_units]
-
-            self.y = tf.placeholder(tf.int32, [None, config.num_step], 'y')
-            y = tf.one_hot(self.y, config.classes)  # [-1, num_step, classes]
-
-            losses, self.y_predict = self.bi_rnn(x, y, config)
-
+            losses, self.y_predict = self.encode_decode(self.x, self.y, config)
             self.loss = tf.reduce_mean(losses)
-            self.grad = opt.compute_gradients(self.loss)  # [(g1, v1), (g2, v2), ... , (gn, vn)]
+            self.grad = opt.compute_gradients(self.loss)
 
+    def encode_decode(self, x, y, config):
+        with tf.variable_scope('encode'):
+            vector = self.encode(x, config)
 
-    def bi_rnn(self, x, y, config):
-        cell1 = tf.nn.rnn_cell.BasicLSTMCell(config.num_units, state_is_tuple=True, name='lstm1')
-        cell2 = tf.nn.rnn_cell.BasicLSTMCell(config.num_units, state_is_tuple=True, name='lstm2')
+        with tf.variable_scope('decode'):
+            batch_size_ts = tf.shape(x)[0]
+            losses, y_predict = self.decode(vector, batch_size_ts, config)
+
+        return losses, y_predict
+
+    def encode(self, x, config):
+        cell1 = tf.nn.rnn_cell.BasicLSTMCell(config.num_units, name='encoder_lstm1')
+        cell2 = tf.nn.rnn_cell.BasicLSTMCell(config.num_units, name='encoder_lstm2')
+        cell = tf.nn.rnn_cell.MultiRNNCell([cell1, cell2])
+
+        ch_dict = tf.get_variable('ch_dict', [config.ch_size, config.num_units], tf.float32)
+        x = tf.nn.embedding_lookup(ch_dict, x)  # [-1, num_step1, num_units]
 
         batch_size_ts = tf.shape(x)[0]
-        state1 = cell1.zero_state(batch_size_ts, tf.float32)  # [batch_size, state_size]
-        state2 = cell2.zero_state(batch_size_ts, tf.float32)  # [batch_size, state_size]
-
-        losses = []
-        y_predict = []
-
-        y1_pred = []
-        y2_pred = []
+        state = cell.zero_state(batch_size_ts, tf.float32)
         with tf.variable_scope('rnn'):
+            for i in range(config.num_step1):
+                xi = x[:, i, :]  # [-1, num_units]
+                _, state = cell(xi, state)
+                #tf.get_variable_scope().reuse_variables()
 
-            for i in range(config.num_step):
-                xi1 = x[:, i, :]  # [-1, num_units]
-                yi1_pred, state1 = cell1(xi1, state1)  # [-1, num_units]
-                y1_pred.append(yi1_pred)
+        return state  # [-1, num_units]
 
-                xi2 = x[:, config.num_step - i - 1, :]
-                yi2_pred, state2 = cell2(xi2, state2)  # [-1, num_units]
-                y2_pred.insert(0, yi2_pred)
-                tf.get_variable_scope().reuse_variables()   # ******
+    def decode(self, state, batch_size_ts, config):
+        #  state: [-1, num_units]
+
+        cell1 = tf.nn.rnn_cell.BasicLSTMCell(config.num_units, name='decoder_lstm1')
+        cell2 = tf.nn.rnn_cell.BasicLSTMCell(config.num_units, name='decoder_lstm2')
+        cell = tf.nn.rnn_cell.MultiRNNCell([cell1, cell2])
 
         with tf.variable_scope('rnn'):
-            for i in range(config.num_step):
-                yi_pred = tf.layers.dense(y1_pred[i] + y2_pred[i], config.classes, name='yi_dense')  # [-1, ch_size]
+            xi = tf.zeros([batch_size_ts, config.num_units], tf.float32)
+            y = tf.one_hot(self.y, config.en_size)  # [-1, num_step2, en_size]
 
-                y_predict.append(tf.argmax(yi_pred, axis=1, output_type=tf.int32))  # [-1, num_step]
+            y_predict = []
+            losses = []
+            for i in range(config.num_step2):
+                yi_predict, state = cell(xi, state)  # [-1, num_units]
+                yi = y[:, i, :]  # [-1, en_size]
+                # y_predict.append(tf.argmax(yi_predict, axis=1))
 
-                yi = y[:, i, :]  # [-1, classes]
+                logits = tf.layers.dense(yi_predict, config.en_size, name='dense')  # [-1, en_size]
+                y_predict.append(tf.argmax(logits, axis=1))  # ****
+                loss = tf.nn.softmax_cross_entropy_with_logits_v2(labels=yi, logits=logits)
+                losses.append(loss)
 
-                loss_i = tf.nn.softmax_cross_entropy_with_logits_v2(labels=yi, logits=yi_pred)
-                losses.append(loss_i)
                 tf.get_variable_scope().reuse_variables()
 
         return losses, y_predict
@@ -148,8 +171,8 @@ class Samples:
     def __init__(self, config: Config):
         self.config = config
         self.index = 0
-        self.data = list(np.random.randint(0, config.ch_size, size=[self.num(), config.num_step]))
-        self.label = list(np.random.randint(0, config.classes, size=[self.num(), config.num_step]))
+        self.chinese = list(np.random.randint(0, config.ch_size, size=[self.num(), config.num_step1]))
+        self.english = list(np.random.randint(0, config.en_size, size=[self.num(), config.num_step2]))
 
     def num(self):
         """
@@ -161,14 +184,14 @@ class Samples:
     def next_batch(self, batch_size):
         next = self.index + batch_size
         if next < self.num():
-            result0 = self.data[self.index: next]
-            result1 = self.label[self.index: next]
+            result0 = self.chinese[self.index: next]
+            result1 = self.english[self.index: next]
         else:
-            result0 = self.data[self.index:]
-            result1 = self.label[self.index:]
+            result0 = self.chinese[self.index:]
+            result1 = self.english[self.index:]
             next -= self.num()
-            result0 += self.data[:next]
-            result1 += self.label[:next]
+            result0 += self.chinese[:next]
+            result1 += self.english[:next]
         self.index = next
         return result0, result1  # [batch_size, num_step], [batch_size, num_step]
 

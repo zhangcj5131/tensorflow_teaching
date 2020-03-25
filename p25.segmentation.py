@@ -116,6 +116,7 @@ class Sub_tensors:
             y2_list.insert(0, yi2_pred)
 
 
+
         loss_list = []
         y_predict_list = []
         with tf.variable_scope('rnn'):
