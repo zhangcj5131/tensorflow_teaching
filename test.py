@@ -15,7 +15,7 @@ class Config:
         self.ch_size = 200
         self.en_size = 100
 
-        self.name = 'p26'
+        self.name = 'p27'
         self.save_path = 'models/{name}/{name}'.format(name=self.name)
         self.logdir = 'logs/{name}/'.format(name=self.name)
 
@@ -113,11 +113,10 @@ class SubTensors:
 
     def encode_decode(self, x, y, config):
         with tf.variable_scope('encode'):
-            vector = self.encode(x, config)
+            vector, attention = self.encode(x, config)
 
         with tf.variable_scope('decode'):
-            batch_size_ts = tf.shape(x)[0]
-            losses, y_predict = self.decode(vector, batch_size_ts, config)
+            losses, y_predict = self.decode(vector, attention, config)
 
         return losses, y_predict
 
@@ -131,34 +130,55 @@ class SubTensors:
 
         batch_size_ts = tf.shape(x)[0]
         state = cell.zero_state(batch_size_ts, tf.float32)
+        z = []
         with tf.variable_scope('rnn'):
             for i in range(config.num_step1):
                 xi = x[:, i, :]  # [-1, num_units]
-                _, state = cell(xi, state)
-                #tf.get_variable_scope().reuse_variables()
+                zi, state = cell(xi, state)
+                z.append(zi)
+                tf.get_variable_scope().reuse_variables()
 
-        return state  # [-1, num_units]
+            # z: [num_step1, -1, num_units]
+        attention = self.get_attention(z, config)
+        return state, attention  # [-1, num_units], [-1, num_step2, num_units]
 
-    def decode(self, state, batch_size_ts, config):
-        #  state: [-1, num_units]
+    def get_attention(self, z, config):
+        # z: [num_step1, -1, num_units]
+        with tf.variable_scope('attention'):
+            z = tf.transpose(z, [1, 0, 2])  # [-1, num_step1, num_units]
 
+            t = z  # [-1, num_step1, num_units]
+            t = tf.reshape(t, [-1, config.num_step1 * config.num_units])
+            t = tf.layers.dense(t, config.num_step2 * config.num_step1, name='dense')  # [-1, num_step2 * num_step1]
+            t = tf.reshape(t, [-1, config.num_step2, config.num_step1, 1])
+            t = tf.nn.softmax(t, axis=2)  # [-1, num_step2, num_step1, 1]
+
+            z = tf.reshape(z, [-1, 1, config.num_step1, config.num_units])#[-1, 1, num_step1, num_units]
+            z = z * t  # [-1, num_step2, num_step1, num_units]
+            attention = tf.reduce_sum(z, axis=2)  # [-1, num_step2, num_units]
+
+            # attention: [-1, num_step2, num_units]
+            return attention
+
+    def decode(self, state, attention, config):
+        # state: [-1, num_units]
+        # attention: [-1, num_step2, num_units]
         cell1 = tf.nn.rnn_cell.BasicLSTMCell(config.num_units, name='decoder_lstm1')
         cell2 = tf.nn.rnn_cell.BasicLSTMCell(config.num_units, name='decoder_lstm2')
         cell = tf.nn.rnn_cell.MultiRNNCell([cell1, cell2])
 
         with tf.variable_scope('rnn'):
-            xi = tf.zeros([batch_size_ts, config.num_units], tf.float32)
             y = tf.one_hot(self.y, config.en_size)  # [-1, num_step2, en_size]
 
             y_predict = []
             losses = []
             for i in range(config.num_step2):
+                xi = attention[:, i, :]  # [-1, num_units]
                 yi_predict, state = cell(xi, state)  # [-1, num_units]
                 yi = y[:, i, :]  # [-1, en_size]
-                # y_predict.append(tf.argmax(yi_predict, axis=1))
+                y_predict.append(tf.argmax(yi_predict, axis=1))
 
                 logits = tf.layers.dense(yi_predict, config.en_size, name='dense')  # [-1, en_size]
-                y_predict.append(tf.argmax(logits, axis=1))  # ****
                 loss = tf.nn.softmax_cross_entropy_with_logits_v2(labels=yi, logits=logits)
                 losses.append(loss)
 
@@ -248,6 +268,6 @@ if __name__ == '__main__':
 
     app = App(config)
 
-    app.train()
+    # app.train()
     app.close()
     print('Finished!')
