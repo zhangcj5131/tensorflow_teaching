@@ -7,15 +7,15 @@ import argparse
 class Config:
     def __init__(self):
         self.batch_size = 20
-        self.num_step1 = 8
-        self.num_step2 = 10
+        self.num_step1 = 50  # the length of the background
+        self.num_step2 = 10  # the length of the question and answer
         self.num_units = 5
+        self.levels = 2
 
         self.gpus = self.get_gpus()
         self.ch_size = 200
-        self.en_size = 100
 
-        self.name = 'p17_2'
+        self.name = 'p30'
         self.save_path = 'models/{name}/{name}'.format(name=self.name)
         self.logdir = 'logs/{name}/'.format(name=self.name)
 
@@ -103,96 +103,63 @@ class Tensors:
 
 class SubTensors:
     def __init__(self, config, gpu_index, opt):
+        self.config = config
         with tf.device('/gpu:%d' % gpu_index):
-            self.x = tf.placeholder(tf.int32, [None, config.num_step1], 'x')
+            self.xr = tf.placeholder(tf.int32, [None, config.num_step1], 'xr')
+            self.xq = tf.placeholder(tf.int32, [None, config.num_step2], 'xq')
             self.y = tf.placeholder(tf.int32, [None, config.num_step2], 'y')
 
-            losses, self.y_predict = self.encode_decode(self.x, self.y, config)
+            background_vector = self.call_cell(self.xr, None, config.num_step1, 'background')
+            question_vector = self.call_cell(self.xq, background_vector, config.num_step2, 'question')
+
+            losses, self.y_predict = self.answer(question_vector, self.y, 'answer')
+
             self.loss = tf.reduce_mean(losses)
             self.grad = opt.compute_gradients(self.loss)
 
-    def encode_decode(self, x, y, config):
-        with tf.variable_scope('encode'):
-            vector, hs = self.encode(x, config)
+    def call_cell(self, x, state, num_step, name):
+        config = self.config
+        with tf.variable_scope(name):
+            cell = self.new_cell()
 
-        with tf.variable_scope('decode'):
-            losses, y_predict = self.decode(vector, hs, config)
+            if state is None:
+                batch_size_ts = tf.shape(x)[0]
+                state = cell.zero_state(batch_size_ts, tf.float32)
 
-        return losses, y_predict
-
-    def encode(self, x, config):
-        cell1 = tf.nn.rnn_cell.BasicLSTMCell(config.num_units, name='encoder_lstm1')
-        cell2 = tf.nn.rnn_cell.BasicLSTMCell(config.num_units, name='encoder_lstm2')
-        cell = tf.nn.rnn_cell.MultiRNNCell([cell1, cell2])
-
-        ch_dict = tf.get_variable('ch_dict', [config.ch_size, config.num_units], tf.float32)
-        x = tf.nn.embedding_lookup(ch_dict, x)  # [-1, num_step1, num_units]
-
-        batch_size_ts = tf.shape(x)[0]
-        state = cell.zero_state(batch_size_ts, tf.float32)
-        hs = []
-        with tf.variable_scope('rnn'):
-            for i in range(config.num_step1):
+            ch_dict = tf.get_variable('ch_dict', [config.ch_size, config.num_units], tf.float32)
+            x = tf.nn.embedding_lookup(ch_dict, x)  # [-1, num_step, num_units]
+            for i in range(num_step):
                 xi = x[:, i, :]  # [-1, num_units]
-                zi, state = cell(xi, state)
-                hs.append(zi)
+                _, state = cell(xi, state)
                 tf.get_variable_scope().reuse_variables()
 
-            # z: [num_step1, -1, num_units]
-        return state, hs  # [-1, num_units], [-1, num_step2, num_units]
+            return state
 
-    def get_soft_attention(self, state, hs, config):
-        # state: [LSTMStateTuple, LSTMStateTuple]   LSTMStateTuple = {h, c}
-        # hs: [-1, num_step1, num_units]
-        state = self.convert_state(state, config)  # [-1, 4 * num_units]
+    def new_cell(self):
+        cells = []
+        for i in range(self.config.levels):
+            cell = tf.nn.rnn_cell.BasicLSTMCell(self.config.num_units, name='lstm_%d' % i)
+            cells.append(cell)
+        cell = tf.nn.rnn_cell.MultiRNNCell(cells)
+        return cell
 
-        alpha = tf.reshape(hs, [-1, config.num_step1 * config.num_units])
-        alpha = tf.concat((state, alpha), axis=1)  # [-1, num_step1 * num_units + 4 * num_units]
-        with tf.variable_scope('attention'):
-            # alpha = tf.layers.dense(alpha, config.num_step1, name='dense1')  # [-1, num_step1]
-            alpha = tf.layers.dense(alpha, config.num_step1, activation=tf.nn.relu, name='dense1')  # [-1, num_step1]
-            alpha = tf.layers.dense(alpha, config.num_step1, name='dense2')
+    def answer(self, vector, y, name):
+        #  y: [-1, num_step3]
+        y = tf.one_hot(y, self.config.ch_size)  # [-1, num_step3, ch_size]
+        with tf.variable_scope(name):
+            cell = self.new_cell()
+            xi = tf.zeros([tf.shape(y)[0], self.config.num_units])
 
-            alpha = tf.nn.softmax(alpha)
-            alpha = tf.reshape(alpha, [-1, config.num_step1, 1])  #  [-1, num_step1, 1]
-
-            alpha = tf.reduce_sum(alpha * hs, axis=1)  # [-1, num_units]
-
-            return alpha
-
-    def convert_state(self, state, config):
-        result = []
-        for s in state:
-            result.append(s.c)
-            result.append(s.h)
-        # result: [4, -1, num_units]
-        result = tf.transpose(result, [1, 0, 2])
-        return tf.reshape(result, [-1, 4*config.num_units])
-
-    def decode(self, state, hs, config):
-        # state: [-1, num_units]
-        # hs: [num_step1, -1, num_units]
-        cell1 = tf.nn.rnn_cell.BasicLSTMCell(config.num_units, name='decoder_lstm1')
-        cell2 = tf.nn.rnn_cell.BasicLSTMCell(config.num_units, name='decoder_lstm2')
-        cell = tf.nn.rnn_cell.MultiRNNCell([cell1, cell2])
-
-        with tf.variable_scope('rnn'):
-            y = tf.one_hot(self.y, config.en_size)  # [-1, num_step2, en_size]
-
-            y_predict = []
             losses = []
+            y_predict = []
+            for i in range(self.config.num_step2):
+                yi_predict, vector = cell(xi, vector)  # [-1, num_units], ...
 
-            hs = tf.transpose(hs, [1, 0, 2])  # [-1, num_step1, num_units]
-            for i in range(config.num_step2):
-                xi = self.get_soft_attention(state, hs, config)  # [-1, num_units]
-                yi_predict, state = cell(xi, state)  # [-1, num_units]
-                yi = y[:, i, :]  # [-1, en_size]
-                y_predict.append(tf.argmax(yi_predict, axis=1))
-
-                logits = tf.layers.dense(yi_predict, config.en_size, name='dense')  # [-1, en_size]
-                loss = tf.nn.softmax_cross_entropy_with_logits_v2(labels=yi, logits=logits)
+                yi = y[:, i, :]  # [-1, ch_size]
+                yi_predict = tf.layers.dense(yi_predict, self.config.ch_size, use_bias=False, name='dense')  # [-1, ch_size]
+                loss = tf.nn.softmax_cross_entropy_with_logits_v2(labels=yi, logits=yi_predict)
                 losses.append(loss)
-
+                y_predict.append(tf.argmax(yi_predict, axis=1))
                 tf.get_variable_scope().reuse_variables()
 
         return losses, y_predict
@@ -202,8 +169,25 @@ class Samples:
     def __init__(self, config: Config):
         self.config = config
         self.index = 0
-        self.chinese = list(np.random.randint(0, config.ch_size, size=[self.num(), config.num_step1]))
-        self.english = list(np.random.randint(0, config.en_size, size=[self.num(), config.num_step2]))
+
+        result = []
+        for _ in range(self.num()):
+            reading = np.random.randint(0, config.ch_size, [np.random.randint(0, 2*config.num_step2)])
+            dialog_num = np.random.randint(1, 20)
+
+            dialogs = []
+            for _ in range(dialog_num):
+                #谁在说话
+                who = np.random.randint(0, 2)
+                #是提问还是回答
+                question = np.random.randint(0, 2)  # 1 means question, 0 means answer
+                #内容
+                what = np.random.randint(0, config.ch_size, [config.num_step2])
+                dialogs.append((who, question, what))
+
+            result.append((reading, dialogs))
+        self.data = result
+        self.samples = self.get_samples()
 
     def num(self):
         """
@@ -213,18 +197,57 @@ class Samples:
         return 100
 
     def next_batch(self, batch_size):
-        next = self.index + batch_size
-        if next < self.num():
-            result0 = self.chinese[self.index: next]
-            result1 = self.english[self.index: next]
-        else:
-            result0 = self.chinese[self.index:]
-            result1 = self.english[self.index:]
-            next -= self.num()
-            result0 += self.chinese[:next]
-            result1 += self.english[:next]
-        self.index = next
-        return result0, result1  # [batch_size, num_step], [batch_size, num_step]
+        xrs, xqs, ys = [], [], []
+        for _ in range(batch_size):
+            xr, xq, y = next(self.samples)
+            xrs.append(xr)
+            xqs.append(xq)
+            ys.append(y)
+        #  xrs = [-1, num_step1], xqs = [-1, num_step2], ys = [-1, num_step2]
+        return xrs, xqs, ys
+
+    def get_samples(self):
+        while True:
+            reading, dialogs = self.data[self.index]
+            # ****** add *******
+            self.index = (self.index + 1) % len(self.data)
+            # ******************
+            #0为提问,1 是回答
+            for xr, xq, y in self.get_sample(reading, dialogs, 0):
+                yield xr, xq, y
+            # 1为提问,0 是回答
+            for xr, xq, y in self.get_sample(reading, dialogs, 1):
+                yield xr, xq, y
+
+    def get_sample(self, reading, dialogs, questioner):
+        q = None
+        for index, (who, question, what) in enumerate(dialogs):
+            if who == questioner:
+                if question:
+                    q = what
+                else:
+                    for word_id in self.transform2background(what, who):
+                        reading = np.concatenate((reading, [word_id]), axis=0)
+            else:
+                if question:
+                    zero = np.zeros([self.config.num_step2])
+                    yield self.padding(reading, self.config.num_step1), zero, what
+                else:
+                    if q is not None:
+                        yield self.padding(reading, self.config.num_step1), q, what
+                        q = None
+
+    def padding(self, reading, max_length):
+        length = len(reading)
+        if max_length < length:
+            print('The max_length (%d) is not enought for reading' % max_length, flush=True)
+            return reading[0:max_length]
+
+        reading = np.concatenate((reading, [0] * (max_length - length)), axis=0)
+        return reading
+
+    def transform2background(self, what, who):
+        return what
 
 
 class App:
@@ -232,7 +255,6 @@ class App:
         self.config = config
         graph = tf.Graph()
         with graph.as_default():
-            self.samples = Samples(config)
             self.tensors = Tensors(config)
             cfg = tf.ConfigProto()
             cfg.allow_soft_placement = True
@@ -247,6 +269,8 @@ class App:
 
     def train(self):
         cfg = self.config
+        self.samples = Samples(cfg)
+
         writer = tf.summary.FileWriter(cfg.logdir, self.session.graph)
 
         for epoch in range(cfg.epoches):
@@ -255,10 +279,13 @@ class App:
                 feed_dict = {
                     self.tensors.lr: cfg.lr
                 }
+
                 for gpu_index in range(cfg.gpus):
-                    x, y = self.samples.next_batch(cfg.batch_size)
-                    feed_dict[self.tensors.sub_ts[gpu_index].x] = x
+                    xr, xq, y = self.samples.next_batch(cfg.batch_size)
+                    feed_dict[self.tensors.sub_ts[gpu_index].xr] = xr
                     feed_dict[self.tensors.sub_ts[gpu_index].y] = y
+                    feed_dict[self.tensors.sub_ts[gpu_index].xq] = xq
+
                 _, loss, su = self.session.run(
                     [self.tensors.train_op, self.tensors.loss, self.tensors.summary_op], feed_dict)
                 writer.add_summary(su, epoch * batches + batch)
@@ -272,13 +299,28 @@ class App:
     def close(self):
         self.session.close()
 
+'''
+一个数据两个人 AB分饰两个角色,用户和机器人,做两轮训练
+提问者是人,回答者是机器人,提问者的陈述句被加入背景
 
+对于训练数据,由于双方会交换,所以所有的背景描述都需要客观,不能有偏向.
+对于预测数据,在明确谁是酒店谁是客人以后,在背景中以酒店为对象,加入客户的陈述的时候要说明是来自客户的
+A问 B 答
+A:是人
+B:机器人
+A的提问,全部当做 question
+A的陈述加入 background
+B 的提问,全部作为回答
+'''
 if __name__ == '__main__':
     config = Config()
     config.from_cmd_line()
 
+    # config.gpus=2
+    # Tensors(config)
+
     app = App(config)
 
-    # app.train()
+    app.train()
     app.close()
     print('Finished!')
