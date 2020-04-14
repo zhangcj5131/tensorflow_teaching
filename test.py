@@ -2,20 +2,20 @@ import tensorflow as tf
 import numpy as np
 import os
 import argparse
+import cv2
 
 
 class Config:
     def __init__(self):
         self.batch_size = 20
-        self.num_step1 = 50  # the length of the background
-        self.num_step2 = 10  # the length of the question and answer
-        self.num_units = 5
-        self.levels = 2
+        self.size = 32
+        self.z_size = 2
+        self.convs = 3
+        self.filters = 2
 
         self.gpus = self.get_gpus()
-        self.ch_size = 200
 
-        self.name = 'p30'
+        self.name = 'p32'
         self.save_path = 'models/{name}/{name}'.format(name=self.name)
         self.logdir = 'logs/{name}/'.format(name=self.name)
 
@@ -55,12 +55,21 @@ class Tensors:
                 tf.get_variable_scope().reuse_variables()
 
         with tf.device('/gpu:0'):
-            grad = self.merge_grads()
+            grad1 = self.merge_grads(lambda ts: ts.grad1)
+            grad2 = self.merge_grads(lambda ts: ts.grad2)
+            grad3 = self.merge_grads(lambda ts: ts.grad3)
 
-            self.train_op = opt.apply_gradients(grad)
-            self.loss = tf.reduce_mean([ts.loss for ts in self.sub_ts])
+            self.train_op1 = opt.apply_gradients(grad1)
+            self.train_op2 = opt.apply_gradients(grad2)
+            self.train_op3 = opt.apply_gradients(grad3)
 
-            tf.summary.scalar('loss', self.loss)
+            self.loss1 = tf.reduce_mean([ts.loss1 for ts in self.sub_ts])
+            self.loss2 = tf.reduce_mean([ts.loss2 for ts in self.sub_ts])
+            self.loss3 = tf.reduce_mean([ts.loss3 for ts in self.sub_ts])
+
+            tf.summary.scalar('loss1', self.loss1)
+            tf.summary.scalar('loss2', self.loss2)
+            tf.summary.scalar('loss3', self.loss3)
             self.summary_op = tf.summary.merge_all()
 
         total = 0
@@ -76,11 +85,11 @@ class Tensors:
             num *= sh.value
         return num
 
-    def merge_grads(self):
+    def merge_grads(self, func):
         indexed_grads = {}
         grads = {}
         for ts in self.sub_ts:
-            for g, v in ts.grad:
+            for g, v in func(ts):
                 if isinstance(g, tf.IndexedSlices):
                     if not v in indexed_grads:
                         indexed_grads[v] = []
@@ -105,64 +114,65 @@ class SubTensors:
     def __init__(self, config, gpu_index, opt):
         self.config = config
         with tf.device('/gpu:%d' % gpu_index):
-            self.xr = tf.placeholder(tf.int32, [None, config.num_step1], 'xr')
-            self.xq = tf.placeholder(tf.int32, [None, config.num_step2], 'xq')
-            self.y = tf.placeholder(tf.int32, [None, config.num_step2], 'y')
+            with tf.variable_scope('disc'):
+                self.x = tf.placeholder(tf.float32, [None, config.size, config.size], 'x')
+                x = tf.reshape(self.x / 255, [-1, config.size, config.size, 1])
+                p1 = self.get_disc(x)
 
-            background_vector = self.call_cell(self.xr, None, config.num_step1, 'background')
-            question_vector = self.call_cell(self.xq, background_vector, config.num_step2, 'question')
+            with tf.variable_scope('gene'):
+                self.z = tf.placeholder(tf.float32, [None, config.z_size], 'z')
+                fake = self.get_gene(self.z)
+                self.fake = tf.reshape(fake * 255, [-1, config.size, config.size])
 
-            losses, self.y_predict = self.answer(question_vector, self.y, 'answer')
+            with tf.variable_scope('disc', reuse=True):
+                p2 = self.get_disc(fake)
 
-            self.loss = tf.reduce_mean(losses)
-            self.grad = opt.compute_gradients(self.loss)
+            #-1*log(p1)-0*log(1-p1)
+            self.loss1 = -tf.reduce_mean(tf.log(p1))
+            #-0*log(p2) -1*log(1-p2)
+            self.loss2 = -tf.reduce_mean(tf.log(1 - p2))
+            #-1*log(p2) - 0*log(1-p2)
+            self.loss3 = -tf.reduce_mean(tf.log(p2))
 
-    def call_cell(self, x, state, num_step, name):
-        config = self.config
-        with tf.variable_scope(name):
-            cell = self.new_cell()
+            disc_vars = [var  for var in tf.trainable_variables() if 'disc' in var.name]
+            gene_vars = [var  for var in tf.trainable_variables() if 'gene' in var.name]
 
-            if state is None:
-                batch_size_ts = tf.shape(x)[0]
-                state = cell.zero_state(batch_size_ts, tf.float32)
+            self.grad1 = opt.compute_gradients(self.loss1, disc_vars)
+            self.grad2 = opt.compute_gradients(self.loss2, disc_vars)
+            self.grad3 = opt.compute_gradients(self.loss3, gene_vars)
 
-            ch_dict = tf.get_variable('ch_dict', [config.ch_size, config.num_units], tf.float32)
-            x = tf.nn.embedding_lookup(ch_dict, x)  # [-1, num_step, num_units]
-            for i in range(num_step):
-                xi = x[:, i, :]  # [-1, num_units]
-                _, state = cell(xi, state)
-                tf.get_variable_scope().reuse_variables()
+    def get_disc(self, img):
+        # img: [size, size, 1]
+        filters = self.config.filters
+        size = self.config.size
+        for i in range(self.config.convs):
+            filters *= 2
+            img = tf.layers.conv2d(img, filters, 3, 1, 'same', activation=tf.nn.relu, name='conv2d_%d' % i)
+            img = tf.layers.max_pooling2d(img, 2, 2)
+            size //= 2
 
-            return state
+        img = tf.layers.flatten(img)  # [-1, 4, 4, 16]
+        img = tf.layers.dense(img, 1, name='dense')  # [-1, 1]
+        p = tf.nn.sigmoid(img)
+        return p  # [-1, 1]
 
-    def new_cell(self):
-        cells = []
-        for i in range(self.config.levels):
-            cell = tf.nn.rnn_cell.BasicLSTMCell(self.config.num_units, name='lstm_%d' % i)
-            cells.append(cell)
-        cell = tf.nn.rnn_cell.MultiRNNCell(cells)
-        return cell
+    def get_gene(self, z):
+        #  z: [-1, z_size]
+        cfg = self.config
+        size = cfg.size // (2 ** cfg.convs)  # 4
+        filters = cfg.filters * int(2**cfg.convs)  # 16
+        z = tf.layers.dense(z, size * size * filters, name='dense1')
+        z = tf.reshape(z, [-1, size, size, filters])
 
-    def answer(self, vector, y, name):
-        #  y: [-1, num_step3]
-        y = tf.one_hot(y, self.config.ch_size)  # [-1, num_step3, ch_size]
-        with tf.variable_scope(name):
-            cell = self.new_cell()
-            xi = tf.zeros([tf.shape(y)[0], self.config.num_units])
+        for i in range(cfg.convs):
+            filters //= 2
+            size *= 2
+            z = tf.layers.conv2d_transpose(z, filters, 3, 2, 'same', activation=tf.nn.relu, name='deconv1_%d' % i)
 
-            losses = []
-            y_predict = []
-            for i in range(self.config.num_step2):
-                yi_predict, vector = cell(xi, vector)  # [-1, num_units], ...
+        # z: [32, 32, 2]
+        z = tf.layers.conv2d_transpose(z, 1, 3, 1, 'same', name='deconv2')  # [32, 32, 1]
+        return z
 
-                yi = y[:, i, :]  # [-1, ch_size]
-                yi_predict = tf.layers.dense(yi_predict, self.config.ch_size, use_bias=False, name='dense')  # [-1, ch_size]
-                loss = tf.nn.softmax_cross_entropy_with_logits_v2(labels=yi, logits=yi_predict)
-                losses.append(loss)
-                y_predict.append(tf.argmax(yi_predict, axis=1))
-                tf.get_variable_scope().reuse_variables()
-
-        return losses, y_predict
 
 
 class Samples:
@@ -170,24 +180,9 @@ class Samples:
         self.config = config
         self.index = 0
 
-        result = []
+        self.data = []
         for _ in range(self.num()):
-            reading = np.random.randint(0, config.ch_size, [np.random.randint(0, 2*config.num_step2)])
-            dialog_num = np.random.randint(1, 20)
-
-            dialogs = []
-            for _ in range(dialog_num):
-                #谁在说话
-                who = np.random.randint(0, 2)
-                #是提问还是回答
-                question = np.random.randint(0, 2)  # 1 means question, 0 means answer
-                #内容
-                what = np.random.randint(0, config.ch_size, [config.num_step2])
-                dialogs.append((who, question, what))
-
-            result.append((reading, dialogs))
-        self.data = result
-        self.samples = self.get_samples()
+            self.data.append(self.get_sample())
 
     def num(self):
         """
@@ -196,64 +191,29 @@ class Samples:
         """
         return 100
 
+    def get_sample(self):
+        img = np.zeros([self.config.size, self.config.size], np.int32)
+        points = np.random.randint(0, self.config.size, [2, 2])
+        cv2.rectangle(img, tuple(points[0]), tuple(points[1]), 255, 1)
+        return img
+
     def next_batch(self, batch_size):
-        xrs, xqs, ys = [], [], []
-        for _ in range(batch_size):
-            xr, xq, y = next(self.samples)
-            xrs.append(xr)
-            xqs.append(xq)
-            ys.append(y)
-        #  xrs = [-1, num_step1], xqs = [-1, num_step2], ys = [-1, num_step2]
-        return xrs, xqs, ys
-
-    def get_samples(self):
-        while True:
-            reading, dialogs = self.data[self.index]
-            # ****** add *******
-            self.index = (self.index + 1) % len(self.data)
-            # ******************
-            #0为提问,1 是回答
-            for xr, xq, y in self.get_sample(reading, dialogs, 0):
-                yield xr, xq, y
-            # 1为提问,0 是回答
-            for xr, xq, y in self.get_sample(reading, dialogs, 1):
-                yield xr, xq, y
-
-    def get_sample(self, reading, dialogs, questioner):
-        q = None
-        for index, (who, question, what) in enumerate(dialogs):
-            if who == questioner:
-                if question:
-                    q = what
-                else:
-                    for word_id in self.transform2background(what, who):
-                        reading = np.concatenate((reading, [word_id]), axis=0)
-            else:
-                if question:
-                    zero = np.zeros([self.config.num_step2])
-                    yield self.padding(reading, self.config.num_step1), zero, what
-                else:
-                    if q is not None:
-                        yield self.padding(reading, self.config.num_step1), q, what
-                        q = None
-
-    def padding(self, reading, max_length):
-        length = len(reading)
-        if max_length < length:
-            print('The max_length (%d) is not enought for reading' % max_length, flush=True)
-            return reading[0:max_length]
-
-        reading = np.concatenate((reading, [0] * (max_length - length)), axis=0)
-        return reading
-
-    def transform2background(self, what, who):
-        return what
+        next = self.index + batch_size
+        if next < len(self.data):
+            result = self.data[self.index: next]
+        else:
+            result = self.data[self.index:]
+            next -= len(self.data)
+            result += self.data[:next]
+        self.index = next
+        return result, np.random.normal(size=[batch_size, self.config.z_size])
 
 
 class App:
     def __init__(self, config: Config):
         self.config = config
         graph = tf.Graph()
+        self.samples = Samples(config)
         with graph.as_default():
             self.tensors = Tensors(config)
             cfg = tf.ConfigProto()
@@ -269,7 +229,7 @@ class App:
 
     def train(self):
         cfg = self.config
-        self.samples = Samples(cfg)
+
 
         writer = tf.summary.FileWriter(cfg.logdir, self.session.graph)
 
@@ -281,40 +241,43 @@ class App:
                 }
 
                 for gpu_index in range(cfg.gpus):
-                    xr, xq, y = self.samples.next_batch(cfg.batch_size)
-                    feed_dict[self.tensors.sub_ts[gpu_index].xr] = xr
-                    feed_dict[self.tensors.sub_ts[gpu_index].y] = y
-                    feed_dict[self.tensors.sub_ts[gpu_index].xq] = xq
+                    x, z = self.samples.next_batch(cfg.batch_size)
+                    feed_dict[self.tensors.sub_ts[gpu_index].x] = x
+                    feed_dict[self.tensors.sub_ts[gpu_index].z] = z
 
-                _, loss, su = self.session.run(
-                    [self.tensors.train_op, self.tensors.loss, self.tensors.summary_op], feed_dict)
+                _, loss1 = self.session.run([self.tensors.train_op1, self.tensors.loss1], feed_dict)
+                _, loss2 = self.session.run([self.tensors.train_op2, self.tensors.loss2], feed_dict)
+                _, loss3, su = self.session.run(
+                    [self.tensors.train_op3, self.tensors.loss3, self.tensors.summary_op], feed_dict)
                 writer.add_summary(su, epoch * batches + batch)
-                print('%d/%d: loss=%.8f' % (batch, epoch, loss), flush=True)
+                print('%d/%d: loss1=%.8f, loss2=%.8f, loss3=%.8f' % (batch, epoch, loss1, loss2, loss3), flush=True)
             self.saver.save(self.session, cfg.save_path)
             print('Save the mode into ', cfg.save_path, flush=True)
 
-    def predict(self):
-        pass
+    def predict(self, batch_size):
+        _, z = self.samples.next_batch(batch_size)
+        feed_dict = {
+            self.tensors.lr: self.config.lr
+        }
+        feed_dict[self.tensors.sub_ts[0].z] = z
+        imgs = self.session.run(self.tensors.sub_ts[0].fake, feed_dict)  # [batch_size, size, size]
+        imgs = np.reshape(imgs, [-1, self.config.size])
+        imgs = np.uint8(imgs)
+        cv2.imshow('imgs', imgs)
+        cv2.waitKey()
 
     def close(self):
         self.session.close()
 
-'''
-一个数据两个人 AB分饰两个角色,用户和机器人,做两轮训练
-提问者是人,回答者是机器人,提问者的陈述句被加入背景
 
-对于训练数据,由于双方会交换,所以所有的背景描述都需要客观,不能有偏向.
-对于预测数据,在明确谁是酒店谁是客人以后,在背景中以酒店为对象,加入客户的陈述的时候要说明是来自客户的
-A问 B 答
-A:是人
-B:机器人
-A的提问,全部当做 question
-A的陈述加入 background
-B 的提问,全部作为回答
-'''
 if __name__ == '__main__':
     config = Config()
     config.from_cmd_line()
+
+    # s = Samples(config)
+    # img = s.get_sample()
+    # cv2.imshow('My pic', np.uint8(img))
+    # cv2.waitKey()
 
     # config.gpus=2
     # Tensors(config)
@@ -322,5 +285,6 @@ if __name__ == '__main__':
     app = App(config)
 
     app.train()
+    app.predict(1)
     app.close()
     print('Finished!')
