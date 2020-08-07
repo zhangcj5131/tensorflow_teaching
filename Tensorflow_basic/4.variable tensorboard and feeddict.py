@@ -94,7 +94,7 @@ def f4():
     y_pred = tf.matmul(x, w) + b + c
     with tf.Session() as sess:
         sess.run(tf.global_variables_initializer())
-        file_writer = tf.summary.FileWriter(logdir='./models/4', graph=sess.graph)
+        file_writer = tf.summary.FileWriter(logdir='./models/9', graph=sess.graph)
         feed_x = [[1,2,3],
      [2,3,4],
      [3,4,5],
@@ -107,6 +107,7 @@ def f4():
                   [3, 4, 5]]
         y_pred_ = sess.run(y_pred, feed_dict={x: feed_x})
         print(y_pred_)
+        file_writer.close()
 
 
 
