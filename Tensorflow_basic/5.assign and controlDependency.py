@@ -12,7 +12,7 @@ def test_assign():
 
         with tf.Session() as sess:
             sess.run(tf.global_variables_initializer())
-            tf.summary.FileWriter('./models/5', graph=sess.graph)
+            tf.summary.FileWriter('./log/5', graph=sess.graph)
             for i in [1,2,3,4]:
                 n_ = sess.run(y, feed_dict={x:i})
                 print(n_)

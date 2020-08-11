@@ -16,7 +16,7 @@ def scalar():
 
         with tf.Session() as sess:
             sess.run(tf.global_variables_initializer())
-            writer = tf.summary.FileWriter(logdir='./models/9', graph=sess.graph)
+            writer = tf.summary.FileWriter(logdir='./log/9', graph=sess.graph)
             step = 1
             for i in [1,2,3,4,5]:
                 summary_op_, y_ = sess.run([summary_op, y], feed_dict={x: i})

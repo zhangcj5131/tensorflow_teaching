@@ -27,7 +27,7 @@ def linear_model():
             sess.run(tf.global_variables_initializer())
             x_train, y_train = train_test_data()
             feed_dict = {x: x_train, y: y_train}
-            file_writer = tf.summary.FileWriter(logdir='./models/10', graph=sess.graph)
+            file_writer = tf.summary.FileWriter(logdir='./log/10', graph=sess.graph)
             step = 1
             for e in range(300):
                 _,su, lo = sess.run([train_op, summary_op, loss], feed_dict)
