@@ -1,7 +1,7 @@
 import tensorflow as tf
 import numpy as np
 import matplotlib.pyplot as plt
-
+import os
 def get_data(n=100):
     x = np.linspace(0,10,n)
     y = 2 * x + 3 + np.random.normal(size=n)
@@ -13,7 +13,7 @@ class Config:
     def __init__(self):
         self.name = 11
         self.lr = 0.01
-        self.epoch = 300
+        self.epoch = 301
         self.save_path = './models/{name}/{name}'.format(name=self.name)
         self.log_dir = './log/{name}'.format(name = self.name)
 
@@ -50,7 +50,7 @@ class Model:
             conf = tf.ConfigProto(
                 allow_soft_placement=True,
                 # 是否允许tf动态的使用cpu和gpu。当我们的版本是gpu版本，那么tf会默认调用你的gpu:0来运算，如果你的gpu无法工作，那么tf就会报错。所以建议有gpu版本的同学，将这个参数设置为True。
-                log_device_placement=True,  # bool值，是否打印设备位置的日志文件。
+                log_device_placement=False,  # bool值，是否打印设备位置的日志文件。
                 gpu_options=gpu_options
             )
             # conf = tf.ConfigProto()
@@ -58,10 +58,17 @@ class Model:
 
             self.session = tf.Session(config=conf, graph=graph)
             self.tensors = Tensors(config)
+            self.saver = tf.train.Saver(max_to_keep=2)
             self.file_writer = tf.summary.FileWriter(logdir=config.log_dir, graph=graph)
-            self.saver = tf.train.Saver()
+
+
+
+
             try:
-                self.saver.restore(self.session, config.save_path)
+                # self.saver.restore(self.session, config.save_path)
+                dirname = os.path.dirname(config.save_path)
+                ckpt = tf.train.get_checkpoint_state(dirname)
+                self.saver.restore(self.session, ckpt.model_checkpoint_path)
                 print('model was successfully restored!')
             except:
                 print('the model does not exist, we have to train a new one!')
@@ -81,7 +88,10 @@ class Model:
             self.file_writer.add_summary(su, step)
             step += 1
             print('epoch=%d, loss=%f' % (e, lo))
-        self.saver.save(self.session, self.config.save_path)
+            if e % 100 == 0:
+                self.saver.save(self.session, self.config.save_path, global_step=e)
+        # self.saver.save(self.session, self.config.save_path)
+
 
     def predict(self):
         x, y = get_data()
