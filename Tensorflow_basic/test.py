@@ -1,101 +1,55 @@
 import tensorflow as tf
-import numpy as np
-import matplotlib.pyplot as plt
 
-def get_data(n = 100):
-    x = np.linspace(0,10, n)
-    y = x * 2 + 3 + np.random.normal(size=n)
-    x.shape = -1, 1
-    y.shape = -1, 1
-    return x, y
+"""
+学习 卷积和池化 api
+"""
 
-class Config:
-    def __init__(self):
-        self.epoch = 300
-        self.name = 11
-        self.lr = 0.01
-        self.epoch = 300
-        self.logdir = './log/{name}'.format(name=self.name)
-        self.save_path = './models/{name}/{name}'.format(name=self.name)
+def conv2d_answer():
+    with tf.Graph().as_default():
+        x = tf.ones(shape=[64, 32, 32, 3])  # [batch_size, height, width, channels=depth]
 
-class Tensors:
-    def __init__(self, config: Config):
-        with tf.device('/gpu:0'):
-            with tf.variable_scope('net_work'):
-                self.lr = tf.placeholder(tf.float32, [], 'lr')
-                self.x = tf.placeholder(tf.float32, [None, 1], 'x')
-                self.y = tf.placeholder(tf.float32, [None, 1], 'y')
+        # todo 创建卷积核变量
+        filter_w = tf.get_variable(
+            'w', initializer=tf.truncated_normal(shape=[7, 7, 3, 20], dtype=tf.float32)
+        )
+        filter_b = tf.get_variable(
+            'b', initializer=tf.zeros(20)
+        )
+        strides = [1, 2, 2, 1]
+        pad = 'SAME'
+        """
+        conv2d(input,   # 输入。注意：格式必须为：4-d tensor [batch_size, height, width, channels]
+            filter,     # 卷积核。 格式为: [卷积核的高， 卷积核的宽， 卷积核的深度(输入图片的channels)， 卷积核的个数(输出图片的channels)]
+            strides,    # 步幅。 [1, 高方向的步幅， 宽方向上的步幅， 1] 
+            padding,    # 填充方式。 string类型，  'VALID' or 'SAME'
+            use_cudnn_on_gpu=True, 
+            data_format="NHWC",   # 对输入数据格式的要求。 N - batch_size, H- height, W - width  C-channels
+            dilations=[1, 1, 1, 1],  # 膨胀因子。
+            name=None):
+        """
+        conv_out = tf.nn.conv2d(
+            input=x, filter=filter_w, strides=strides, padding=pad
+        )
+        conv_out = conv_out + filter_b
+        conv_out = tf.nn.relu(conv_out)
 
-                w = tf.get_variable('w', [1, 1], tf.float32, initializer=tf.random_normal_initializer)
-                b = tf.get_variable('b', [1], tf.float32, initializer=tf.zeros_initializer)
-                self.y_pred = tf.matmul(self.x, w) + b
-
-            with tf.variable_scope('loss'):
-                self.loss = tf.reduce_mean(tf.square(self.y - self.y_pred))
-                tf.summary.scalar('loss', self.loss)
-
-            with tf.variable_scope('optimizer'):
-                self.train_op = tf.train.GradientDescentOptimizer(config.lr).minimize(self.loss)
-                self.summary_op = tf.summary.merge_all()
-
+        with tf.Session() as sess:
+            sess.run(tf.global_variables_initializer())
+            print(sess.run(conv_out).shape)
 
 
+def maxpool():
+    with tf.Graph().as_default():
+        x = tf.ones(shape=[64, 4, 4, 3])   # [N, H, W, C]
 
-
-
-class Model:
-    def __init__(self, config: Config):
-        self.config = config
-        graph = tf.Graph()
-        with graph.as_default():
-            conf = tf.ConfigProto()
-            conf.allow_soft_placement = True
-            self.session = tf.Session(graph=graph, config=conf)
-
-            self.tensors = Tensors(config)
-            self.saver = tf.train.Saver()
-            self.file_writer = tf.summary.FileWriter(logdir=config.logdir, graph = graph)
-            try:
-                self.saver.restore(self.session, self.config.save_path)
-                print('the model was restorted successfully!')
-            except:
-                print('the model does not exist, we have to train a new one!')
-                self.train()
-
-    def train(self):
-        self.session.run(tf.global_variables_initializer())
-        x, y = get_data()
-        feed_dict = {self.tensors.x: x,
-                     self.tensors.y: y,
-                     self.tensors.lr: self.config.lr}
-        step = 1
-        for e in range(self.config.epoch):
-            _, su, lo = self.session.run([self.tensors.train_op,
-                              self.tensors.summary_op,
-                              self.tensors.loss], feed_dict)
-            self.file_writer.add_summary(su, step)
-            step += 1
-            print('epoch=%d, loss=%f' % (e, lo))
-        self.saver.save(self.session, self.config.save_path)
-
-    def predict(self):
-        x, y = get_data()
-        feed_dict = {self.tensors.x: x}
-        y_predict = self.session.run(self.tensors.y_pred, feed_dict)
-        plt.plot(x, y, 'r+')
-        plt.plot(x, y_predict, 'b-')
-        plt.show()
-
-    def close(self):
-        self.file_writer.close()
-        self.session.close()
-
-
-
+        max_out = tf.nn.max_pool(
+            value=x, ksize=[1, 3, 3, 1], strides=[1, 2, 2, 1], padding='SAME'
+        )
+        print(max_out)
+        with tf.Session() as sess:
+            print(sess.run(max_out))
 
 
 if __name__ == '__main__':
-    config = Config()
-    model = Model(config)
-    model.predict()
-    model.close()
+    conv2d_answer()
+    # maxpool()

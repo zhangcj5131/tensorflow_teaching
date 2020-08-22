@@ -5,8 +5,7 @@ import matplotlib.pyplot as plt
 
 
 """
-项目提交邮箱：yingjun@ibeifeng.com
-请注明：班级 + 名字。
+
 
 要求提交：
      1、python源码；
