@@ -90,11 +90,11 @@ def show_dropout():
             sess.run(tf.global_variables_initializer())
             hidden_output_, hidden_output_drop_, hidden_output_drop1_ = sess.run(
                 [hidden_output, hidden_output_drop, hidden_output_drop1])
-            print(hidden_output_,
-                  '\n',
-                  hidden_output_drop_,
-                  '\n',
-                  hidden_output_drop1_)
+            print(hidden_output_)
+            print('-------')
+            print(hidden_output_drop_)
+            print('-------')
+            print(hidden_output_drop1_)
 
 
 if __name__ == '__main__':
