@@ -143,7 +143,7 @@ def my_batch_normalization(x, momentum=0.99,
     mom_square = tf.get_variable('mom_square', shape, tf.float32, tf.initializers.zeros, trainable=False)
 
     def training_true():
-        mean = tf.reduce_mean(x, axis = 0)#[1,2,3]
+        mean = tf.reduce_mean(x, axis = 0)#生成一个只有[1,2,3]这三个维度的结果
         new_mean = momentum*mom_mean + (1-momentum)*mean
         assign_mean = tf.assign(mom_mean, new_mean)
         tf.add_to_collection(tf.GraphKeys.UPDATE_OPS, assign_mean)

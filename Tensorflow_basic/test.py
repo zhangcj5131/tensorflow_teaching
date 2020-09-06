@@ -1,201 +1,462 @@
+
+
+
+"""
+本小节目的：分别运用下面2种API来 完成BN的训练。并比较做了BN和 未做BN的网络的准确率的区别。
+
+1. [Batch Normalization with `tf.layers.batch_normalization`](#example_1)
+2. [Batch Normalization with `tf.nn.batch_normalization`](#example_2)
+"""
+
+
 import tensorflow as tf
-from tensorflow.examples.tutorials.mnist.input_data import read_data_sets
+from tensorflow.examples.tutorials.mnist import input_data
+mnist = input_data.read_data_sets("./data", one_hot=True, reshape=False)
 
 
-class Config:
-    def __init__(self):
-        self.name = 18
-        self.epoches = 50
-        self.batch_size = 128
-        self.logdir_train = './log/{name}/train'.format(name=self.name)
-        self.logdir_valid = './log/{name}/valid'.format(name=self.name)
-        self.save_path = './models/{name}/{name}'.format(name=self.name)
-        self.sample_path = './data/MNIST_data'
-        self.keep_prob = 0.8
-        self.classes = 10
-        self.filter_size = 32
-        self.lr = 0.01
+# todo-未加BN的代码，直接copy演示。
+def fully_connected(prev_layer, num_units):
+    """
+    Create a fully connectd layer with the given layer as input and the given number of neurons.
+
+    :param prev_layer: Tensor
+        The Tensor that acts as input into this layer
+    :param num_units: int
+        The size of the layer. That is, the number of units, nodes, or neurons.
+    :returns Tensor
+        A new fully connected layer
+    """
+    layer = tf.layers.dense(prev_layer, num_units, activation=tf.nn.relu)
+    return layer
 
 
-class Samples:
-    def __init__(self, config: Config):
-        self.ds = read_data_sets(config.sample_path)
+def conv_layer(prev_layer, layer_depth):
+    """
+    Create a convolutional layer with the given layer as input.
 
-    def next_batch(self, batch_size):
-        return self.ds.train.next_batch(batch_size)
-
-    @property
-    def num(self):
-        return self.ds.train.num_examples
-
-
-"""
-网络结构图。
-1、input [N, 28, 28, 1]    N 代表批量
-2、卷积1  卷积核[5, 5, 1, 32]  ---> 4-d tensor [-1, 28, 28, 32]
-3、池化1  strides=2            ---> 4-d tensor [-1, 14, 14, 32]
-4、卷积2  卷积核[5, 5, 32, 64]  --->            [-1, 14, 14, 64]
-5、池化2  strides=2             --->            [-1, 7, 7, 64]
-6、拉平层（reshape）            --->             [-1, 7*7*64]
-7、FC1    权重[7*7*64, 1024]    --->             [-1, 1024]
-8、输出层(logits)  权重[1024, num_classes]   --->   [-1, num_classes]
-"""
+    :param prev_layer: Tensor
+        The Tensor that acts as input into this layer
+    :param layer_depth: int
+        We'll set the strides and number of feature maps based on the layer's depth in the network.
+        This is *not* a good way to make a CNN, but it helps us create this example with very little code.
+    :returns Tensor
+        A new convolutional layer
+    """
+    strides = 2 if layer_depth % 3 == 0 else 1
+    conv_layer = tf.layers.conv2d(prev_layer, layer_depth * 4, 3, strides, 'same', activation=tf.nn.relu)
+    return conv_layer
 
 
-class Tensors:
-    def __init__(self, config: Config):
-        self.config = config
-        with tf.device('/gpu:0'):
-            with tf.variable_scope('network'):
-                weight_list = [
-                    tf.get_variable('conv1_w', [5, 5, 1, 32], tf.float32,
-                                    tf.truncated_normal_initializer(stddev=0.1)),
-                    tf.get_variable('conv2_w', [5, 5, 32, 64], tf.float32,
-                                    tf.truncated_normal_initializer(stddev=0.1)),
-                    tf.get_variable('fc_w', [7 * 7 * 64, 1024], tf.float32,
-                                    tf.truncated_normal_initializer(stddev=0.1)),
-                    tf.get_variable('logit_w', [1024, config.classes],
-                                    tf.float32, tf.truncated_normal_initializer(stddev=0.1))
-                ]
-                bias_list = [
-                    tf.get_variable('conv1_b', [32], tf.float32,
-                                    tf.zeros_initializer()),
-                    tf.get_variable('conv2_b', [64], tf.float32,
-                                    tf.zeros_initializer()),
-                    tf.get_variable('fc_b', [1024], tf.float32,
-                                    tf.zeros_initializer()),
-                    tf.get_variable('logit_b', [config.classes], tf.float32,
-                                    tf.zeros_initializer())
-                ]
-                self.x = tf.placeholder(tf.float32, [None, 784], 'x')
-                x = tf.reshape(self.x, [-1, 28, 28, 1])
-                self.y = tf.placeholder(tf.int32, [None], 'y')
-                y_onehot = tf.one_hot(self.y, config.classes)
-                self.lr = tf.placeholder(tf.float32, [], 'lr')
-                self.keep_prob = tf.placeholder(tf.float32, [], 'keep_prob')
+def train(num_batches, batch_size, learning_rate):
+    # Build placeholders for the input samples and labels
+    inputs = tf.placeholder(tf.float32, [None, 28, 28, 1])
+    labels = tf.placeholder(tf.float32, [None, 10])
 
-                conv1 = self.conv2d_block(x, weight_list[0], bias_list[0])
-                conv1 = tf.nn.dropout(conv1, keep_prob=self.keep_prob)
-                conv1 = self.maxpool(conv1)
+    # Feed the inputs into a series of 20 convolutional layers
+    layer = inputs
+    for layer_i in range(1, 20):
+        layer = conv_layer(layer, layer_i)
 
-                conv2 = self.conv2d_block(conv1, weight_list[1], bias_list[1])
-                conv2 = tf.nn.dropout(conv2, keep_prob=self.keep_prob)
-                conv2 = self.maxpool(conv2)
+    # Flatten the output from the convolutional layers
+    orig_shape = layer.get_shape().as_list()
+    layer = tf.reshape(layer, shape=[-1, orig_shape[1] * orig_shape[2] * orig_shape[3]])
 
-                # shape = conv2.get_shape()
-                shape = tf.shape(conv2)
-                print(shape)
-                fc_input = tf.reshape(conv2, [-1, shape[1] * shape[2] * shape[3]])
-                fc = tf.matmul(fc_input, weight_list[2]) + bias_list[2]
-                fc = tf.nn.relu6(fc)
-                fc = tf.nn.dropout(fc, keep_prob=self.keep_prob)
+    # Add one fully connected layer
+    layer = fully_connected(layer, 100)
 
-                logits = tf.matmul(fc, weight_list[3]) + bias_list[3]
+    # Create the output layer with 1 node for each
+    logits = tf.layers.dense(layer, 10)
 
-            with tf.variable_scope('loss'):
-                self.loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=logits, labels=y_onehot))
+    # Define
+    model_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
+        logits=logits, labels=labels
+    ))
 
-                opt = tf.train.GradientDescentOptimizer(self.lr)
-                self.train_op = opt.minimize(self.loss)
-                tf.summary.scalar('train_loss', tensor=self.loss, collections=['trian'])
-                tf.summary.scalar('valid_loss', tensor=self.loss, collections=['valid'])
+    train_opt = tf.train.AdamOptimizer(learning_rate).minimize(model_loss)
 
-            with tf.variable_scope('accuracy'):
-                acc = tf.equal(tf.math.argmax(logits, axis=1, output_type=tf.int32), self.y)
-                acc = tf.cast(acc, tf.float32)
-                self.acc = tf.reduce_mean(acc)
-                tf.summary.scalar('train_acc', tensor=self.acc, collections=['trian'])
-                tf.summary.scalar('valid_acc', tensor=self.acc, collections=['valid'])
-                self.summary_train = tf.summary.merge_all('trian')
-                self.summary_valid = tf.summary.merge_all('valid')
+    correct_prediction = tf.equal(tf.argmax(logits, 1), tf.argmax(labels, 1))
+    accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
 
-    def conv2d_block(self, input_tensor, filter_w, filter_b, strides=1, padding='SAME'):
-        conv = tf.nn.conv2d(input_tensor, filter_w, strides=[1, strides, strides, 1], padding=padding)
-        conv = tf.nn.bias_add(conv, filter_b)
-        conv = tf.nn.relu6(conv)
-        return conv
+    # Train and test the network
+    with tf.Session() as sess:
+        sess.run(tf.global_variables_initializer())
+        for batch_i in range(num_batches):
+            batch_xs, batch_ys = mnist.train.next_batch(batch_size)
 
-    def maxpool(self, input_tensor, k=2):
-        ksize = [1, k, k, 1]
-        stride = [1, k, k, 1]
-        return tf.nn.max_pool(value=input_tensor, ksize=ksize, strides=stride, padding='SAME')
+            # train this batch
+            sess.run(train_opt, {inputs: batch_xs,
+                                 labels: batch_ys})
 
+            # Periodically check the validation or training loss and accuracy
+            if batch_i % 100 == 0:
+                loss, acc = sess.run([model_loss, accuracy], {inputs: mnist.validation.images,
+                                                              labels: mnist.validation.labels})
+                print(
+                    'Batch: {:>2}: Validation loss: {:>3.5f}, Validation accuracy: {:>3.5f}'.format(batch_i, loss, acc))
+            elif batch_i % 25 == 0:
+                loss, acc = sess.run([model_loss, accuracy], {inputs: batch_xs, labels: batch_ys})
+                print('Batch: {:>2}: Training loss: {:>3.5f}, Training accuracy: {:>3.5f}'.format(batch_i, loss, acc))
 
-class Model:
-    def __init__(self, config: Config):
-        self.config = config
-        with tf.Graph().as_default() as graph:
-            gpu_options = tf.GPUOptions(
-                allow_growth=True,  # 不预先分配整个gpu显存计算，而是从小到大，按需增加。
-                per_process_gpu_memory_fraction=0.9  # value-(0, 1) 限制使用该gpu设备的显存使用的百分比。一般建议设置0.8--0.9左右。
-            )
-            conf = tf.ConfigProto(
-                allow_soft_placement=True,
-                # 是否允许tf动态的使用cpu和gpu。当我们的版本是gpu版本，那么tf会默认调用你的gpu:0来运算，如果你的gpu无法工作，那么tf就会报错。所以建议有gpu版本的同学，将这个参数设置为True。
-                log_device_placement=False,  # bool值，是否打印设备位置的日志文件。
-                gpu_options=gpu_options
-            )
-            self.session = tf.Session(config=conf, graph=graph)
-            self.tensors = Tensors(config)
-            self.saver = tf.train.Saver(max_to_keep=2)
-            self.filewriter_train = tf.summary.FileWriter(logdir=config.logdir_train, graph=graph)
-            self.filewriter_valid = tf.summary.FileWriter(logdir=config.logdir_valid, graph=graph)
-            ckpt = tf.train.get_checkpoint_state(config.save_path)
-            try:
-                self.saver.restore(self.session, ckpt.model_checkpoint_path)
-                print('model is successfully restored!')
-            except:
-                print('the model does not exist, we have to train a new one!')
-                self.session.run(tf.global_variables_initializer())
+        # At the end, score the final accuracy for both the validation and test sets
+        acc = sess.run(accuracy, {inputs: mnist.validation.images,
+                                  labels: mnist.validation.labels})
+        print('Final validation accuracy: {:>3.5f}'.format(acc))
+        acc = sess.run(accuracy, {inputs: mnist.test.images,
+                                  labels: mnist.test.labels})
+        print('Final test accuracy: {:>3.5f}'.format(acc))
 
-    def train(self):
-        config = self.config
-        self.samples = Samples(config)
-        batches = self.samples.num // config.batch_size
-        step = 0
-        for epoch in range(config.epoches):
-            for batch in range(batches):
-                step += 1
-                x, y = self.samples.next_batch(config.batch_size)
-                feed_dict_train = {
-                    self.tensors.x: x,
-                    self.tensors.y: y,
-                    self.tensors.lr: config.lr,
-                    self.tensors.keep_prob: config.keep_prob
-                }
-                self.session.run(self.tensors.train_op, feed_dict_train)
+        # Score the first 100 test images individually, just to make sure batch normalization really worked
+        correct = 0
+        for i in range(100):
+            correct += sess.run(accuracy, feed_dict={inputs: [mnist.test.images[i]],
+                                                     labels: [mnist.test.labels[i]]})
 
-                if step % 20 == 0:
-                    train_su, train_loss, train_acc = self.session.run([self.tensors.summary_train,
-                                                                        self.tensors.loss,
-                                                                        self.tensors.acc], feed_dict_train)
-                    self.filewriter_train.add_summary(train_su, global_step=step)
+        print("Accuracy on 100 samples:", correct / 100)
 
-                    feed_dict_valid = {
-                        self.tensors.x: self.samples.ds.validation.images[:512],
-                        self.tensors.y: self.samples.ds.validation.labels[:512],
-                        self.tensors.keep_prob: 1.
-                    }
-                    valid_su, valid_loss, valid_acc = self.session.run([self.tensors.summary_valid,
-                                                                        self.tensors.loss,
-                                                                        self.tensors.acc], feed_dict_valid)
-                    self.filewriter_valid.add_summary(valid_su, global_step=step)
-                    print('step=%d, trian loss=%f, train acc=%f, valid loss=%f, valid acc=%f' %
-                          (step, train_loss, train_acc, valid_loss, valid_acc))
+# num_batches = 800
+# batch_size = 64
+# learning_rate = 0.002
+#
+# tf.reset_default_graph()
+# with tf.Graph().as_default():
+#     train(num_batches, batch_size, learning_rate)
 
-            if epoch % 3 == 0:
-                self.saver.save(self.session, config.save_path, global_step=step)
+# todo - 下面开始使用BN(使用`tf.layers.batch_normalization`)进行训练。
 
-    def close(self):
-        self.filewriter_valid.close()
-        self.filewriter_train.close()
-        self.session.close()
+def fully_connected(prev_layer, num_units, is_training):
+    """
+    Create a fully connectd layer with the given layer as input and the given number of neurons.
+
+    :param prev_layer: Tensor
+        The Tensor that acts as input into this layer
+    :param num_units: int
+        The size of the layer. That is, the number of units, nodes, or neurons.
+    :param is_training: bool or Tensor
+        Indicates whether or not the network is currently training, which tells the batch normalization
+        layer whether or not it should update or use its population statistics.
+    :returns Tensor
+        A new fully connected layer
+    """
+    layer = tf.layers.dense(
+        prev_layer, num_units, use_bias=False, activation=None
+    )
+    layer = tf.layers.batch_normalization(layer, training=is_training)
+    layer = tf.nn.relu(layer)
+    return layer
 
 
-if __name__ == '__main__':
-    config = Config()
+def conv_layer(prev_layer, layer_depth, is_training):
+    """
+    Create a convolutional layer with the given layer as input.
 
-    model = Model(config)
-    model.train()
-    model.close()
+    :param prev_layer: Tensor
+        The Tensor that acts as input into this layer
+    :param layer_depth: int
+        We'll set the strides and number of feature maps based on the layer's depth in the network.
+        This is *not* a good way to make a CNN, but it helps us create this example with very little code.
+    :param is_training: bool or Tensor
+        Indicates whether or not the network is currently training, which tells the batch normalization
+        layer whether or not it should update or use its population statistics.
+    :returns Tensor
+        A new convolutional layer
+    """
+    strides = 2 if layer_depth % 3 == 0 else 1
+    # fixme 因为Bnorm中有 位移因子beta（它就相当于偏置项的功能）， 所以卷积中不用使用bias。
+    conv_layer = tf.layers.conv2d(
+        prev_layer, layer_depth * 4, 3, strides, 'same', use_bias=False, activation=None
+    )
+    conv_layer = tf.layers.batch_normalization(conv_layer, training=is_training)
+    conv_layer = tf.nn.relu(conv_layer)
 
+    return conv_layer
+
+
+def train_BN(num_batches, batch_size, learning_rate):
+    # Build placeholders for the input samples and labels
+    inputs = tf.placeholder(tf.float32, [None, 28, 28, 1])
+    labels = tf.placeholder(tf.float32, [None, 10])
+
+    # Add placeholder to indicate whether or not we're training the model
+    is_training = tf.placeholder(tf.bool)
+
+    # Feed the inputs into a series of 20 convolutional layers
+    layer = inputs
+    for layer_i in range(1, 20):
+        layer = conv_layer(layer, layer_i, is_training)
+
+    # Flatten the output from the convolutional layers
+    orig_shape = layer.get_shape().as_list()
+    layer = tf.reshape(layer, shape=[-1, orig_shape[1] * orig_shape[2] * orig_shape[3]])
+
+    # Add one fully connected layer
+    layer = fully_connected(layer, 100, is_training)
+
+    # Create the output layer with 1 node for each
+    logits = tf.layers.dense(layer, 10)
+
+    # Define loss and training operations
+    model_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
+        logits=logits, labels=labels
+    ))
+
+    # Tell TensorFlow to update the population statistics while training
+    # fixme 有BN都必须如此使用，控制依赖项中含义是 先更新全局统计量（均值和方差的移动平均数）
+    with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
+        train_opt = tf.train.AdamOptimizer(learning_rate).minimize(model_loss)
+
+    # Create operations to test accuracy
+    correct_prediction = tf.equal(tf.argmax(logits, 1), tf.argmax(labels, 1))
+    accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
+
+    # Train and test the network
+    with tf.Session() as sess:
+        sess.run(tf.global_variables_initializer())
+        for batch_i in range(num_batches):
+            batch_xs, batch_ys = mnist.train.next_batch(batch_size)
+
+            # 执行梯度下降
+            sess.run(train_opt, {inputs: batch_xs, labels: batch_ys, is_training: True})
+
+            # Periodically check the validation or training loss and accuracy
+            if batch_i % 100 == 0:
+                loss, acc = sess.run([model_loss, accuracy], {inputs: mnist.validation.images,
+                                                              labels: mnist.validation.labels,
+                                                              is_training: False})
+                print(
+                    'Batch: {:>2}: Validation loss: {:>3.5f}, Validation accuracy: {:>3.5f}'.format(batch_i, loss, acc))
+            elif batch_i % 25 == 0:
+                loss, acc = sess.run([model_loss, accuracy], {inputs: batch_xs, labels: batch_ys, is_training: False})
+                print('Batch: {:>2}: Training loss: {:>3.5f}, Training accuracy: {:>3.5f}'.format(batch_i, loss, acc))
+
+        # At the end, score the final accuracy for both the validation and test sets
+        acc = sess.run(accuracy, {inputs: mnist.validation.images,
+                                  labels: mnist.validation.labels,
+                                  is_training: False})
+        print('Final validation accuracy: {:>3.5f}'.format(acc))
+        acc = sess.run(accuracy, {inputs: mnist.test.images,
+                                  labels: mnist.test.labels,
+                                  is_training: False})
+        print('Final test accuracy: {:>3.5f}'.format(acc))
+
+        # Score the first 100 test images individually, just to make sure batch normalization really worked
+        correct = 0
+        for i in range(100):
+            correct += sess.run(accuracy, feed_dict={inputs: [mnist.test.images[i]],
+                                                     labels: [mnist.test.labels[i]],
+                                                     is_training: False})
+
+        print("Accuracy on 100 samples:", correct / 100)
+
+#
+# num_batches = 800
+# batch_size = 64
+# learning_rate = 0.002
+#
+# tf.reset_default_graph()
+# with tf.Graph().as_default():
+#     train_BN(num_batches, batch_size, learning_rate)
+
+
+# todo - 下面开始自己实现BN，并进行训练。
+def fully_connected(prev_layer, num_units, is_training):
+    """
+    Create a fully connectd layer with the given layer as input and the given number of neurons.
+
+    :param prev_layer: Tensor
+        The Tensor that acts as input into this layer
+    :param num_units: int
+        The size of the layer. That is, the number of units, nodes, or neurons.
+    :param is_training: bool or Tensor
+        Indicates whether or not the network is currently training, which tells the batch normalization
+        layer whether or not it should update or use its population statistics.
+    :returns Tensor
+        A new fully connected layer
+    """
+
+    layer = tf.layers.dense(prev_layer, num_units, use_bias=False, activation=None)
+
+    gamma = tf.Variable(initial_value=tf.ones([num_units]), trainable=True)
+    beta = tf.Variable(initial_value=tf.zeros([num_units]), trainable=True)
+
+    # 仅仅作为计算存储用(用于预测的)，不参与模型训练。
+    pop_mean = tf.Variable(initial_value=tf.zeros([num_units]), trainable=False)
+    pop_variance = tf.Variable(initial_value=tf.ones([num_units]), trainable=False)
+
+    epsilon = 1e-3  # 防止除以0的。
+
+    def batch_norm_training():
+        """
+        用于训练阶段的。
+        :return:
+        """
+        # 1、tf.nn.moments 计算`x`的均值和方差.
+        batch_mean, batch_variance = tf.nn.moments(layer, axes=[0])
+        # 2、构建更新 全局统计量的assign赋值操作符
+        decay = 0.99
+        train_mean = tf.assign(
+            ref=pop_mean, value=pop_mean * decay + (1-decay) * batch_mean
+        )
+        train_variance = tf.assign(
+            pop_variance, value=pop_variance * decay + (1-decay) * batch_variance
+        )
+        # 3、构建控制依赖项，并最终执行当前批次的批归一化操作。
+        with tf.control_dependencies(control_inputs=[train_mean, train_variance]):
+            # 执行当前批量数据的归一化
+            normalized_linear_output = (layer - batch_mean) / tf.sqrt(batch_variance + epsilon)
+            return normalized_linear_output * gamma + beta
+
+    def batch_norm_inference():
+        """
+        用于推理（验证 和 测试的时候）
+        :return:
+        """
+        normalized_linear_output = (layer - pop_mean) / tf.sqrt(pop_variance + epsilon)
+        return normalized_linear_output * gamma + beta
+
+    # 若is_training为真，返回batch_norm_training，反之返回batch_norm_inference
+    batch_normalized_output = tf.cond(is_training, batch_norm_training, batch_norm_inference)
+    return tf.nn.relu(batch_normalized_output)
+
+
+def conv_layer(prev_layer, layer_depth, is_training):
+    """
+    Create a convolutional layer with the given layer as input.
+
+    :param prev_layer: Tensor
+        The Tensor that acts as input into this layer
+    :param layer_depth: int
+        We'll set the strides and number of feature maps based on the layer's depth in the network.
+        This is *not* a good way to make a CNN, but it helps us create this example with very little code.
+    :param is_training: bool or Tensor
+        Indicates whether or not the network is currently training, which tells the batch normalization
+        layer whether or not it should update or use its population statistics.
+    :returns Tensor
+        A new convolutional layer
+    """
+    strides = 2 if layer_depth % 3 == 0 else 1
+
+    # 获取传进来的图片的 第4维度数量（即图片的depth）
+    in_channels = prev_layer.get_shape().as_list()[3]
+    out_channels = layer_depth * 4
+
+    weights = tf.Variable(tf.truncated_normal([3, 3, in_channels, out_channels], stddev=0.05))
+
+    layer = tf.nn.conv2d(prev_layer, weights, strides=[1, strides, strides, 1], padding='SAME')
+
+    gamma = tf.Variable(initial_value=tf.ones([out_channels]), trainable=True)
+    beta = tf.Variable(initial_value=tf.zeros([out_channels]), trainable=True)
+
+    pop_mean = tf.Variable(initial_value=tf.zeros([out_channels]), trainable=False)
+    pop_variance = tf.Variable(initial_value=tf.ones([out_channels]), trainable=False)
+
+    epsilon = 1e-3  # 防止除以0的。
+
+    def batch_norm_training():
+        # 1、tf.nn.moments 计算`x`的均值和方差.
+        batch_mean, batch_variance = tf.nn.moments(layer, axes=[0, 1, 2], keep_dims=False)
+
+        # 2、构建更新 全局统计量的assign赋值操作符
+        decay = 0.99
+        train_mean = tf.assign(
+            ref=pop_mean, value=pop_mean * decay + (1 - decay) * batch_mean
+        )
+        train_variance = tf.assign(
+            pop_variance, value=pop_variance * decay + (1 - decay) * batch_variance
+        )
+        # 3、构建控制依赖项，并最终执行当前批次的批归一化操作。
+        with tf.control_dependencies(control_inputs=[train_mean, train_variance]):
+            # 执行当前批量数据的归一化
+            normalized_linear_output = (layer - batch_mean) / tf.sqrt(batch_variance + epsilon)
+            return normalized_linear_output * gamma + beta
+
+    def batch_norm_inference():
+        normalized_linear_output = (layer - pop_mean) / tf.sqrt(pop_variance + epsilon)
+        return normalized_linear_output * gamma + beta
+
+    batch_normalized_output = tf.cond(is_training, batch_norm_training, batch_norm_inference)
+    return tf.nn.relu(batch_normalized_output)
+
+
+
+
+
+def train_BN1(num_batches, batch_size, learning_rate):
+    # Build placeholders for the input samples and labels
+    inputs = tf.placeholder(tf.float32, [None, 28, 28, 1])
+    labels = tf.placeholder(tf.float32, [None, 10])
+
+    # Add placeholder to indicate whether or not we're training the model
+    is_training = tf.placeholder(tf.bool)
+
+    # todo - 做了一个循环，建了20个卷积层 Feed the inputs into a series of 20 convolutional layers
+    layer = inputs
+    for layer_i in range(1, 20):
+        layer = conv_layer(layer, layer_i, is_training)
+
+    # Flatten the output from the convolutional layers
+    orig_shape = layer.get_shape().as_list()
+    layer = tf.reshape(layer, shape=[-1, orig_shape[1] * orig_shape[2] * orig_shape[3]])
+
+    # Add one fully connected layer
+    layer = fully_connected(layer, 100, is_training)
+
+    # 获得分对数  Create the output layer with 1 node for each
+    logits = tf.layers.dense(layer, 10)
+
+    # Define loss and training operations
+    model_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=logits, labels=labels))
+    train_opt = tf.train.AdamOptimizer(learning_rate).minimize(model_loss)
+
+    # Create operations to test accuracy
+    correct_prediction = tf.equal(tf.argmax(logits, 1), tf.argmax(labels, 1))
+    accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
+
+    # Train and test the network
+    with tf.Session() as sess:
+        sess.run(tf.global_variables_initializer())
+        for batch_i in range(num_batches):
+            batch_xs, batch_ys = mnist.train.next_batch(batch_size)
+
+            # train this batch
+            sess.run(train_opt, {inputs: batch_xs, labels: batch_ys, is_training: True})
+
+            # Periodically check the validation or training loss and accuracy
+            if batch_i % 100 == 0:
+                loss, acc = sess.run([model_loss, accuracy], {inputs: mnist.validation.images,
+                                                              labels: mnist.validation.labels,
+                                                              is_training: False})
+                print(
+                    'Batch: {:>2}: Validation loss: {:>3.5f}, Validation accuracy: {:>3.5f}'.format(batch_i, loss, acc))
+            elif batch_i % 25 == 0:
+                loss, acc = sess.run([model_loss, accuracy], {inputs: batch_xs, labels: batch_ys, is_training: False})
+                print('Batch: {:>2}: Training loss: {:>3.5f}, Training accuracy: {:>3.5f}'.format(batch_i, loss, acc))
+
+        # At the end, score the final accuracy for both the validation and test sets
+        acc = sess.run(accuracy, {inputs: mnist.validation.images,
+                                  labels: mnist.validation.labels,
+                                  is_training: False})
+        print('Final validation accuracy: {:>3.5f}'.format(acc))
+        acc = sess.run(accuracy, {inputs: mnist.test.images,
+                                  labels: mnist.test.labels,
+                                  is_training: False})
+        print('Final test accuracy: {:>3.5f}'.format(acc))
+
+        # Score the first 100 test images individually, just to make sure batch normalization really worked
+        correct = 0
+        for i in range(100):
+            correct += sess.run(accuracy, feed_dict={inputs: [mnist.test.images[i]],
+                                                     labels: [mnist.test.labels[i]],
+                                                     is_training: False})
+
+        print("Accuracy on 100 samples:", correct / 100)
+
+num_batches = 800
+batch_size = 64
+learning_rate = 0.002
+
+tf.reset_default_graph()
+with tf.Graph().as_default():
+    train_BN1(num_batches, batch_size, learning_rate)
+
+# todo-注意到，在我们最开始的几百个batches中，哪怕使用BN但准确率并不高。也就是说BN在最开始的训练中并没有起作用，
+# 你需要给你的网络一点时间去学习。
