@@ -18,7 +18,7 @@ def my_sqrt(value, lr = 0.001, epoches = 12000):
 
 
 
-    return value
+
 
 if __name__ == '__main__':
     value = 100
