@@ -4,16 +4,25 @@ mnist = input_data.read_data_sets("./data", one_hot=True, reshape=False)
 
 
 def fully_connected(layer, num_units, is_training):
-    layer = tf.layers.dense(layer, num_units, use_bias=False, activation=tf.nn.relu)
-    gamma = tf.Variable(initial_value=tf.ones(shape=[num_units]), trainable=True)
-    beta = tf.Variable(initial_value=tf.zeros(shape=[num_units]), trainable=True)
+    layer = tf.layers.dense(layer, num_units, use_bias=False)
+    gama = tf.Variable(
+        initial_value=tf.ones(shape=[num_units]), trainable=True
+    )
+    beta = tf.Variable(
+        initial_value=tf.zeros(shape=[num_units]), trainable=True
+    )
 
-    mom_mean = tf.Variable(initial_value=tf.zeros(shape=[num_units]), trainable=False)
-    mom_variance = tf.Variable(initial_value=tf.ones(shape=[num_units]), trainable=False)
+    mom_mean = tf.Variable(
+        initial_value=tf.zeros(shape=[num_units]), trainable=False
+    )
+    mom_variance = tf.Variable(
+        initial_value=tf.ones(shape=[num_units]), trainable=False
+    )
     eps = 1e-3
     decay_rate = 0.99
+
     def train_true():
-        batch_mean, batch_variance = tf.nn.moments(layer, axes=[0])
+        batch_mean, batch_variance = tf.nn.moments(layer, axes=[0], keep_dims=False)
         mean_assign = tf.assign(
             ref = mom_mean, value = decay_rate*mom_mean + (1-decay_rate)*batch_mean
         )
@@ -22,12 +31,12 @@ def fully_connected(layer, num_units, is_training):
         )
         with tf.control_dependencies(control_inputs=[mean_assign, variance_assign]):
             bn_output = (layer - batch_mean)/tf.sqrt(batch_variance+eps)
-            bn_output = bn_output*gamma + beta
+            bn_output = bn_output*gama + beta
             return bn_output
 
     def train_false():
         bn_output = (layer - mom_mean) / tf.sqrt(mom_variance + eps)
-        bn_output = bn_output * gamma + beta
+        bn_output = bn_output * gama + beta
         return bn_output
 
     output = tf.cond(is_training, train_true, train_false)
@@ -36,41 +45,52 @@ def fully_connected(layer, num_units, is_training):
 
 
 def conv_layer(layer, layer_i, is_training):
-    strides = 2 if layer_i%3 == 0 else 1
-    input_size = layer.get_shape().as_list()[3]
-    output_size = layer_i*4
+    strides = 2 if layer_i%4 == 0 else 1
+    input_channel = layer.get_shape().as_list()[-1]
+    output_channel = layer_i*4
     weights = tf.Variable(
-        initial_value=tf.truncated_normal(shape=[3,3,input_size, output_size], stddev=0.05)
+        initial_value=tf.truncated_normal(shape=[3,3,input_channel, output_channel], stddev=0.05)
     )
     layer = tf.nn.conv2d(layer, weights, [1, strides, strides, 1], 'SAME')
-    gamma = tf.Variable(initial_value=tf.ones(shape=[output_size]), trainable=True)
-    beta = tf.Variable(initial_value=tf.zeros(shape=[output_size]), trainable=True)
 
-    mom_mean = tf.Variable(initial_value=tf.zeros(shape=[output_size]), trainable=False)
-    mom_variance = tf.Variable(initial_value=tf.ones(shape=[output_size]), trainable=False)
+    gama = tf.Variable(
+        initial_value=tf.ones(shape=[output_channel]), trainable=True
+    )
+    beta = tf.Variable(
+        initial_value=tf.zeros(shape=[output_channel]), trainable=True
+    )
+
+    mom_mean = tf.Variable(
+        initial_value=tf.zeros(shape=[output_channel]), trainable=False
+    )
+    mom_variance = tf.Variable(
+        initial_value=tf.ones(shape=[output_channel]), trainable=False
+    )
     eps = 1e-3
     decay_rate = 0.99
+
     def train_true():
-        batch_mean, batch_variance = tf.nn.moments(layer, axes=[0,1,2],keep_dims=False)
+        batch_mean, batch_variance = tf.nn.moments(layer, axes=[0,1,2], keep_dims=False)
         mean_assign = tf.assign(
-            ref = mom_mean, value = decay_rate*mom_mean + (1-decay_rate)*batch_mean
+            ref=mom_mean, value=decay_rate * mom_mean + (1 - decay_rate) * batch_mean
         )
         variance_assign = tf.assign(
-            ref = mom_variance, value = decay_rate*mom_variance + (1-decay_rate)*batch_variance
+            ref=mom_variance, value=decay_rate * mom_variance + (1 - decay_rate) * batch_variance
         )
         with tf.control_dependencies(control_inputs=[mean_assign, variance_assign]):
-            bn_output = (layer - batch_mean)/tf.sqrt(batch_variance+eps)
-            bn_output = bn_output*gamma + beta
+            bn_output = (layer - batch_mean) / tf.sqrt(batch_variance + eps)
+            bn_output = bn_output * gama + beta
             return bn_output
 
     def train_false():
         bn_output = (layer - mom_mean) / tf.sqrt(mom_variance + eps)
-        bn_output = bn_output * gamma + beta
+        bn_output = bn_output * gama + beta
         return bn_output
 
     output = tf.cond(is_training, train_true, train_false)
     output = tf.nn.relu(output)
     return output
+
 
 
 

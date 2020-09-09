@@ -10,8 +10,8 @@ def fully_connected(layer, num_unists, is_training):
 
 
 def conv_layer(layer, layer_i, is_training):
-    strides = 2 if layer_i %3 ==0 else 1
-    layer = tf.layers.conv2d(layer, layer_i*4, 3, strides, 'same', use_bias=False, activation=None)
+    strides = 2 if layer_i%3 == 0 else 1
+    layer = tf.layers.conv2d(layer, layer_i*4, 3, strides, 'same', use_bias=False)
     layer = tf.layers.batch_normalization(layer, training=is_training)
     layer = tf.nn.relu(layer)
     return layer
