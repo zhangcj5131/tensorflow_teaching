@@ -16,7 +16,7 @@ def brightness_images(image):
     """
     # 颜色通道转换   BGR ----> HSV(Hue 色调， Saturation 饱和度  V  亮度)
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-
+    #图片默认是 int8
     image1 = np.array(hsv, dtype=np.float64)
     random_bright = 0.5 + np.random.uniform()  # 随机调亮 或者调暗的随机数生成
     print(random_bright)
@@ -50,7 +50,9 @@ def trans_image(image, hori_range, vertical_range):
 
 def crop_img_and_resize(image):
     shape = image.shape
-    image1 = image[100:shape[0], 0:shape[1]]
+    print(shape)
+    #从图片的宽和高纬度上截取一部分
+    image1 = image[100:shape[0], 100:shape[1]]
 
     # 需要重新resize 缩放
     new_col = 224
@@ -163,9 +165,10 @@ def random_bright_img():
     执行随机调整图片亮度
     :return:
     """
-    img_origin = './images/3.jpg'
+    img_origin = './images/1.jpg'
     img = cv2.imread(img_origin)
 
+    #在亮度上随机调整的图片
     brighted_img = brightness_images(img)
 
     # 定义一个画板
@@ -174,11 +177,11 @@ def random_bright_img():
     # 121的意思是： 整个画板分为 1行2列， a位于第一个位置。
     a = fig.add_subplot(121)
     a.imshow(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
-    a.set_title('原始图片')
+    a.set_title("original picture")
 
     b = fig.add_subplot(122)
     b.imshow(brighted_img)
-    b.set_title('调节亮度以后的')
+    b.set_title('adjust brightness')
     plt.show()
 
 
@@ -223,7 +226,7 @@ if __name__ == '__main__':
     # img_color_change()
     # scale_img()
     for _ in range(3):
-        # random_bright_img()
+        random_bright_img()
         # vertical_hrizontal_shift()
         # random_flip_img()
-        random_rotated_img()
+        # random_rotated_img()
