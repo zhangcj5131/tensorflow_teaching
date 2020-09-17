@@ -27,9 +27,7 @@ sess = tf.InteractiveSession()
 
 # todo 2. 读取图像数据
 image_path = "./images/1.png"
-# image_path = "./gray.png"
-# image_path = "./black_white.jpg"
-#image_path = "./images/timg.gif"
+# image_path = "./images/timg.gif"
 
 """
 def read_file(filename, name=None):
@@ -37,8 +35,8 @@ def read_file(filename, name=None):
 """
 
 file_contents = tf.read_file(image_path)
-print(file_contents.eval())
-print('**' * 40)
+print(file_contents.eval())#sess.run(file_contents)
+print('--' * 40)
 
 # todo 将数据转换为图像数据
 """
@@ -56,17 +54,16 @@ def decode_image(contents, channels=None, name=None):
         3：使用RGB三通道读取数据
         4：使用RGBA四通道读取数据(R：红色，G：绿色，B：蓝色，A：透明度)
 """
-# image_tensor = tf.image.decode_image(contents=file_contents, channels=3)
+#image_tensor = tf.image.decode_image(contents=file_contents, channels=3)
 # show_image(image_tensor.eval())
 
-# image_tensor = tf.image.decode_png(contents=file_contents, channels=3, dtype=tf.uint8)
+image_tensor = tf.image.decode_png(contents=file_contents, channels=3, dtype=tf.uint8)
 # print('原始数据shape is:{}'.format(image_tensor.eval().shape))
-# show_image(image_tensor.eval())
+show_image(image_tensor.eval())
 
-image_tensor = tf.image.decode_gif(contents=file_contents)
-# print(image_tensor)
-# print(image_tensor.eval())
-#
+# image_tensor = tf.image.decode_gif(contents=file_contents)
+# # print(image_tensor)
+# # print(image_tensor.eval())
 # print("原始数据形状:{}".format(np.shape(image_tensor.eval())))
 # show_image(image_tensor.eval()[6])
 
@@ -99,8 +96,8 @@ def resize_images(images,
 # float_image_tensor = tf.image.convert_image_dtype(image_tensor, dtype=tf.float32)
 # resize_image_tensor = tf.image.resize_images(
 #     images=float_image_tensor, size=(128, 80), method=3)
-# print(resize_image_tensor)
-# print("rize后的数据形状:{}".format(resize_image_tensor.eval().shape))
+#
+# print("rrize后的数据形状:{}".format(resize_image_tensor.eval().shape))
 # show_image(resize_image_tensor.eval())
 
 
@@ -139,16 +136,7 @@ def crop_to_bounding_box(image, offset_height, offset_width, target_height,
 # show_image(crop_to_bounding_box_image_tensor.eval())
 
 
-# 给定位置进行数据的填充
-"""
-def pad_to_bounding_box(image, offset_height, offset_width, target_height,
-                        target_width):
-"""
-pad_to_bounding_box_image_tensor = tf.image.pad_to_bounding_box(
-    image_tensor, 200, 100, 1000, 1000
-)
-print("pad_to_bounding_box数据形状:{}".format(np.shape(pad_to_bounding_box_image_tensor.eval())))
-show_image(pad_to_bounding_box_image_tensor.eval())
+
 
 
 # todo 5. 旋转
@@ -224,7 +212,8 @@ def where(condition, x=None, y=None, name=None):
       NOTE: 要求condition、x、y的数据形状是一致的
 """
 # 对于a中所有大于0.9的像素，设置为0，小于等于0.9的像素值设置为原始值
-# c = tf.where(condition=b, x=a, y=a - a)   # todo 注意y 这里只能用 a-a ，而不能直接用0，因为是一个矩阵
+#tf.cond
+#c = tf.where(condition=b, x=a, y=a - a)   # todo 注意y 这里只能用 a-a ，而不能直接用0，因为是一个矩阵
 # show_image(c.eval())
 
 
@@ -284,7 +273,7 @@ def adjust_brightness(image, delta):
 
 
 # 给图像加一个噪音
-# noisy_image_tensor = image_tensor + tf.cast(5 * tf.random_normal(shape=[1944, 2054, 3], mean=0, stddev=0.1), tf.uint8)
+noisy_image_tensor = image_tensor + tf.cast(5 * tf.random_normal(shape=[1944, 2054, 3], mean=0, stddev=0.1), tf.uint8)
 # print("新的数据形状:{}".format(np.shape(noisy_image_tensor.eval())))
 # show_image(noisy_image_tensor.eval())
 
@@ -295,13 +284,13 @@ def adjust_brightness(image, delta):
 
 
 # todo 图像保存(基于scipy的相关API做图像处理)
-# from scipy.misc import imsave, imread, imresize, imshow, imfilter, imrotate
-#
-# file_path = "./images/1.png"
-# img = imread(file_path)
-# img = imresize(img, size=(200, 200))
-# imsave('./images/11111.png', img)
-# print(type(img))
-# print(np.shape(img))
-# imsave('./images/test.png', noisy_image_tensor.eval())
-# print('done!!')
+from scipy.misc import imsave, imread, imresize, imshow, imfilter, imrotate
+
+file_path = "./images/1.png"
+img = imread(file_path)
+img = imresize(img, size=(200, 200))
+imsave('./images/11111.png', img)
+print(type(img))
+print(np.shape(img))
+imsave('./images/test.png', noisy_image_tensor.eval())
+print('done!!')

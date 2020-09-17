@@ -1,4 +1,4 @@
-
+# -- encoding:utf-8 --
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
@@ -204,7 +204,8 @@ def rotation_img(image_src):
     print(rotation_randomint)
     # 定义一个旋转映射的矩阵。scale:缩放比例
     rotate_M = cv2.getRotationMatrix2D((cols/2, rows/2), rotation_randomint, scale = 1.0)
-    rotated_img = cv2.warpAffine(image_src, rotate_M, (cols, rows), borderValue=[225, 225, 225])
+    #borderValue是对边缘填充的颜色,不写的花,默认边缘填充黑色
+    rotated_img = cv2.warpAffine(image_src, rotate_M, (cols, rows), borderValue=[255, 255, 255])
     return rotated_img
 
 
