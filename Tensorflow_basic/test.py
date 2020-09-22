@@ -1,307 +1,136 @@
-# -- encoding:utf-8 --
-
-
-import numpy as np
-import matplotlib.pyplot as plt
+import pandas as pd
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split
 import tensorflow as tf
+import os
 
 
-# 打印numpy的数组对象的时候，中间不省略
-np.set_printoptions(threshold=np.inf)
+class Config:
+    def __init__(self):
+        self.data_path = '../data/iris.data'
+        self.lr = 0.01
+        self.epoches = 300
+        self.name = 29
+        self.save_path = './models/{name}/{name}'.format(name = self.name)
+        self.logdir = './log/{name}'.format(name=self.name)
 
 
-def show_image(image):
-    shape = np.shape(image)
-    if len(shape) == 3 and shape[2] == 1:
-        # 黑白图像
-        plt.imshow(image[:, :, 0], cmap='gray')
-        plt.show()
-    elif len(shape) == 3:
-        # 彩色图像
-        plt.imshow(image)
-        plt.show()
+class Tensors:
+    def __init__(self, config: Config):
+        self.config = config
+        with tf.device('/gpu:0'):
+            with tf.variable_scope('network'):
+                self.x = tf.placeholder(tf.float32, [None, 4], 'x')
+                self.y = tf.placeholder(tf.int32, [None], 'y')
+                self.lr = tf.placeholder(tf.float32, [], 'lr')
+                w = tf.get_variable(name = 'w', shape = [4, 3], dtype = tf.float32,
+                                    initializer = tf.truncated_normal_initializer(stddev=0.1))
+                b = tf.get_variable(name='b', shape=[3], dtype=tf.float32,
+                                    initializer=tf.zeros_initializer())
+
+                logits = tf.matmul(self.x, w) + b
+                # prediction = tf.nn.softmax(logits)
+                y_predict = tf.math.argmax(logits, axis = 1)
+                self.loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(
+                    labels=self.y, logits=logits
+                ))
+                tf.summary.scalar('loss', self.loss)
+                self.train_op = tf.train.AdamOptimizer(self.lr).minimize(self.loss)
+                correct_num = tf.equal(tf.cast(y_predict, tf.int32), self.y)
+                correct_num = tf.cast(correct_num, tf.float32)
+                self.acc = tf.reduce_mean(correct_num)
+                tf.summary.scalar('acc', self.acc)
+                self.summary_op = tf.summary.merge_all()
 
 
-# 1. 启动一个交互式的会话
-sess = tf.InteractiveSession()
+class Model:
+    def __init__(self, config: Config):
+        self.config = config
+        graph = tf.Graph()
+        with graph.as_default():
+            gpu_options = tf.GPUOptions(
+                allow_growth=True,  # 不预先分配整个gpu显存计算，而是从小到大，按需增加。
+                per_process_gpu_memory_fraction=0.9  # value-(0, 1) 限制使用该gpu设备的显存使用的百分比。一般建议设置0.8--0.9左右。
+            )
+            conf = tf.ConfigProto(
+                allow_soft_placement=True,
+                # 是否允许tf动态的使用cpu和gpu。当我们的版本是gpu版本，那么tf会默认调用你的gpu:0来运算，如果你的gpu无法工作，那么tf就会报错。所以建议有gpu版本的同学，将这个参数设置为True。
+                log_device_placement=False,  # bool值，是否打印设备位置的日志文件。
+                gpu_options=gpu_options
+            )
+            self.session = tf.Session(config=conf, graph=graph)
+            self.tensors = Tensors(config)
+            self.file_writer = tf.summary.FileWriter(logdir=config.logdir,
+                                                     graph=graph)
+            self.saver = tf.train.Saver(max_to_keep=2)
+            try:
+                dirname = os.path.dirname(config.save_path)
+                ckpt = tf.train.get_checkpoint_state(dirname)
+                self.saver.restore(self.session, ckpt.model_checkpoint_path)
+                print('model is successfully restored!')
+            except:
+                self.session.run(tf.global_variables_initializer())
+                print('the model does not exist, we have to train a new one!')
 
-# todo 2. 读取图像数据
-image_path = "./images/1.png"
-# image_path = "./gray.png"
-# image_path = "./black_white.jpg"
-#image_path = "./images/timg.gif"
+    def train(self):
+        config = self.config
+        self.samples = Samples(config)
+        X_train, X_test, y_train, y_test = self.samples.preprocess_data()
+        step = 1
+        for epoch in range(config.epoches):
+            feed_dict = {self.tensors.x: X_train,
+                         self.tensors.y: y_train,
+                         self.tensors.lr: config.lr}
+            _, lo, acc, su = self.session.run([self.tensors.train_op,
+                              self.tensors.loss,
+                              self.tensors.acc,
+                              self.tensors.summary_op], feed_dict=feed_dict)
+            self.file_writer.add_summary(su, global_step=step)
+            step += 1
+            print('epoch=%d, loss=%f, acc=%f' % (epoch, lo, acc))
+            if epoch%50 == 0:
+                self.saver.save(self.session, config.save_path, global_step=epoch)
+                step+=1
 
-"""
-def read_file(filename, name=None):
-  filename：给定一个待读取文件的路径
-"""
+        test_dict = {self.tensors.x: X_test,
+                     self.tensors.y: y_test}
+        test_acc = self.session.run(self.tensors.acc, feed_dict=test_dict)
+        print('test acc = %f', test_acc)
 
-file_contents = tf.read_file(image_path)
-print(file_contents.eval())
-print('**' * 40)
-
-# todo 将数据转换为图像数据
-"""
-def decode_image(contents, channels=None, name=None):
-    将图像数据转换为像素点的数据格式，返回对象为: [height, width, num_channels], 
-                 如果是gif的图像返回[num_frames, height, width, num_channels]
-        height: 图片的高度的像素大小
-        width: 图片的水平宽度的像素大小
-        num_channels: 图像的通道数，也就是API中的channels的值
-        num_frames: 因为gif的图像是一个动态图像，可以将每一个动的画面看成一个静态图像，num_frames相当于在这个gif图像中有多少个静态图像
-    一、contents: 给定具体的数据对象
-    二、参数channels：可选值：0 1 3 4，默认为0， 一般使用0 1 3，不建议使用4
-        0：使用图像的默认通道，也就是图像是几通道的就使用几通道
-        1：使用灰度级别的图像数据作为返回值（只有一个通道：黑白）
-        3：使用RGB三通道读取数据
-        4：使用RGBA四通道读取数据(R：红色，G：绿色，B：蓝色，A：透明度)
-"""
-# image_tensor = tf.image.decode_image(contents=file_contents, channels=3)
-# show_image(image_tensor.eval())
-
-# image_tensor = tf.image.decode_png(contents=file_contents, channels=3, dtype=tf.uint8)
-# print('原始数据shape is:{}'.format(image_tensor.eval().shape))
-# show_image(image_tensor.eval())
-
-image_tensor = tf.image.decode_gif(contents=file_contents)
-# print(image_tensor)
-# print(image_tensor.eval())
-#
-# print("原始数据形状:{}".format(np.shape(image_tensor.eval())))
-# show_image(image_tensor.eval()[6])
-
-
-# todo 3. 图像大小的缩放
-"""
-def resize_images(images,
-                  size,
-                  method=ResizeMethod.BILINEAR,
-                  align_corners=False):
-    重置大小，放大或者缩小
-        images: 给定需要进行大小重置的tensor对象，shape要求为: [batch_size, height, width, channel] 或者 [height, width, channel]； 表示可以一次对很多图像做大小重置，也可以仅仅对一个图像做一个大小重置操作；
-        size：给定一个二元组，也就是(new_height, new_width)
-        method: 做一个放大和缩小的时候，采用什么算法放大缩小（如何产生新的像素点的值）
-            class ResizeMethod(object):
-              BILINEAR = 0 # 默认值，二次线性插值
-              NEAREST_NEIGHBOR = 1 # 使用邻居的像素值作为新的像素值
-              BICUBIC = 2 # 三次插值，一般建议使用BICUBIC，但是运行速度比较慢。效果最好
-              AREA = 3 # 使用一个区域的所有颜色的均值作为新的像素值,是 cv2 采用的
-    返回的数据类型和输入的images的数据shape格式一致
-"""
-# resize_image_tensor = tf.image.resize_images(
-#     images=image_tensor, size=(128, 80),
-#     method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
-
-# resize_image_tensor = tf.image.resize_images(
-#     images=image_tensor, size=(128, 80),
-#     method=tf.image.ResizeMethod.AREA)
-
-# float_image_tensor = tf.image.convert_image_dtype(image_tensor, dtype=tf.float32)
-# resize_image_tensor = tf.image.resize_images(
-#     images=float_image_tensor, size=(128, 80), method=3)
-# print(resize_image_tensor)
-# print("rize后的数据形状:{}".format(resize_image_tensor.eval().shape))
-# show_image(resize_image_tensor.eval())
+    def close(self):
+        self.file_writer.close()
+        self.session.close()
 
 
-# todo 4. 图像的剪切和填充
-# 图像剪切+填充+大小重置，如果给定大小小于原始图像的大小，那么进行剪切操作，如果给定的大小大于原始图像的大小，那么进行填充操作
-"""
-def resize_image_with_crop_or_pad(image, target_height, target_width):
-    image：需要进行操作的图像tensor对象
-    target_height, target_width: 新图像的高度和宽度
-做填充和剪切的时候，是从中心位置开始计算
-"""
-# crop_or_pad_image_tensor = tf.image.resize_image_with_crop_or_pad(image_tensor,
-#                                                                   target_height=800,
-#                                                                   target_width=200)
-# print("crop后的数据形状:{}".format(np.shape(crop_or_pad_image_tensor.eval())))
-# show_image(crop_or_pad_image_tensor.eval())
+
+class Samples:
+    def __init__(self, config: Config):
+        self._iris = pd.read_csv(config.data_path, header=None)
+
+    def _read_data(self):
+        label_map = {name: index for index, name in enumerate(self._iris[4].unique())}
+        self._iris[4] = self._iris[4].map(label_map)
+        features = self._iris.iloc[:, 0:4]
+        labels = self._iris.iloc[:, 4]
+        return features.values, labels.values
+
+    def preprocess_data(self):
+        features, labels = self._read_data()
+        X_train, X_test, y_train, y_test = \
+            train_test_split(features, labels, test_size=0.2, random_state=42)
+        normal_func = StandardScaler()
+        X_train = normal_func.fit_transform(X_train)
+        X_test = normal_func.transform(X_test)
+        return X_train, X_test, y_train, y_test
 
 
-# 从中心位置等比例的剪切
-# central_crop_image_tensor = tf.image.central_crop(image_tensor, central_fraction=0.6)
-# print("central_crop后的数据形状:{}".format(np.shape(central_crop_image_tensor.eval())))
-# show_image(central_crop_image_tensor.eval())
 
 
-# 基于给定的坐标进行数据的剪切
-"""
-def crop_to_bounding_box(image, offset_height, offset_width, target_height,
-                         target_width):
-        offset_height：给定从高度那个位置进行剪切，其实给定的是剪切的左上角的像素下标
-        offset_width: 给定从宽度那个维度进行剪切，其实给定的是剪切的左上角的像素下标
-"""
-# crop_to_bounding_box_image_tensor = tf.image.crop_to_bounding_box(
-#     image_tensor, 100, 20, 500, 490
-# )
-# print("crop_to_bounding后数据形状:{}".format(np.shape(crop_to_bounding_box_image_tensor.eval())))
-# show_image(crop_to_bounding_box_image_tensor.eval())
-
-
-# 给定位置进行数据的填充
-"""
-def pad_to_bounding_box(image, offset_height, offset_width, target_height,
-                        target_width):
-"""
-pad_to_bounding_box_image_tensor = tf.image.pad_to_bounding_box(
-    image_tensor, 200, 100, 1000, 1000
-)
-print("pad_to_bounding_box数据形状:{}".format(np.shape(pad_to_bounding_box_image_tensor.eval())))
-show_image(pad_to_bounding_box_image_tensor.eval())
-
-
-# todo 5. 旋转
-# 上下交换
-# flip_up_down_image_tensor = tf.image.flip_up_down(image_tensor)
-# print("flip_up_down后形状:{}".format(np.shape(flip_up_down_image_tensor.eval())))
-# show_image(flip_up_down_image_tensor.eval())
-
-
-# 左右交换
-# flip_left_right_image_tensor = tf.image.flip_left_right(image_tensor)
-# print("新的数据形状:{}".format(np.shape(flip_left_right_image_tensor.eval())))
-# show_image(flip_left_right_image_tensor.eval())
-
-
-# 转置(行，列互换)
-# transpose_image_tensor = tf.image.transpose_image(image_tensor)
-# print("transpose_image后形状:{}".format(np.shape(transpose_image_tensor.eval())))
-# show_image(transpose_image_tensor.eval())
-
-
-# 旋转（90、180、270、360）
-# random_int = np.random.randint(low=0, high=3)
-# rot90_image_tensor = tf.image.rot90(image_tensor, k=random_int)
-# print("新的数据形状:{}".format(np.shape(rot90_image_tensor.eval())))
-# show_image(rot90_image_tensor.eval())
-
-
-# todo 6. 颜色空间的转换
-# NOTE: 如果要进行颜色空间的转换，那么必须将Tensor对象中的数据类型转换为float类型
-# NOTE: 对于图像像素点的表示来讲，可以使用0~255的uint8类型的数值表示，也可以使用0~1之间的float类型的数据表示
-# print(image_tensor.eval())
-float_image_tensor = tf.image.convert_image_dtype(image_tensor, dtype=tf.float32)
-# print(float_image_tensor.eval())
-
-# RGB -> Gray
-gray_image_tensor = tf.image.rgb_to_grayscale(float_image_tensor)
-# print("新的数据形状:{}".format(np.shape(gray_image_tensor.eval())))
-# show_image(gray_image_tensor.eval())
-
-
-# RGB -> HSV(RGB: 颜色是由三原色构成的，也就是R红色、G绿色、B蓝色；HSV：描述的是颜色的色彩信息，H：图像的色彩、色度，S表示的图像的饱和度；V表示亮度)
-# 注意：必须使用float数据类型的图片，若用uint8的会报如下错误：
-#    TypeError: Value passed to parameter 'images' has DataType uint8 not in list of allowed values: float32, float64
-# hsv_image_tensor = tf.image.rgb_to_hsv(float_image_tensor)
-# print("新的数据形状:{}".format(np.shape(hsv_image_tensor.eval())))
-# # hsv的图像展示不是特别好...
-# show_image(hsv_image_tensor.eval())
-
-# hsv -> rgb
-# rgb_image_tensor = tf.image.hsv_to_rgb(hsv_image_tensor)
-# print("新的数据形状:{}".format(np.shape(rgb_image_tensor.eval())))
-# show_image(rgb_image_tensor.eval())
-
-
-# todo gray -> rgb 注意：只是通道增加了，并不能转为彩色
-# rgb_image_tensor = tf.image.grayscale_to_rgb(gray_image_tensor)
-# print("新的数据形状:{}".format(np.shape(rgb_image_tensor.eval())))
-# show_image(rgb_image_tensor.eval())
-
-
-# todo 灰度图作用：可以从颜色空间中提取图像的轮廓信息(图像的二值化)
-# 图像的二值化
-a = gray_image_tensor
-b = tf.less_equal(a, 0.9)
-
-# 0就是黑，1就是白
-"""
-def where(condition, x=None, y=None, name=None):
-      condition: 给定一个bool数据组成的tensor对象
-      x：当condition中的值为true的时候，返回的值
-      y：当condition中的值为false的时候，返回的值
-      NOTE: 要求condition、x、y的数据形状是一致的
-"""
-# 对于a中所有大于0.9的像素，设置为0，小于等于0.9的像素值设置为原始值
-# c = tf.where(condition=b, x=a, y=a - a)   # todo 注意y 这里只能用 a-a ，而不能直接用0，因为是一个矩阵
-# show_image(c.eval())
-
-
-# 对于a中所有小于等于0.9的像素，设置为1，大于0.9的像素设置为c的值
-# d = tf.where(condition=b, x=tf.ones_like(c), y=c)
-# print("新的数据形状:{}".format(np.shape(d.eval())))
-# show_image(d.eval())
-
-
-# todo 7. 图像的调整
-# 亮度调整
-"""
-def adjust_brightness(image, delta):
-  image: 需要调整的图像tensor对象
-  delta：调整的参数值，取值范围:(-1,1); 该值表示亮度增加或者减少的值。
-底层是将image转换为hsv格式的数据，然后再进行处理。# rgb -> hsv -> h,s,v+delta -> rgb
-"""
-# adjust_brightness_image_tensor = tf.image.adjust_brightness(image_tensor, delta=-0.5)
-# print("新的数据形状:{}".format(np.shape(adjust_brightness_image_tensor.eval())))
-# show_image(adjust_brightness_image_tensor.eval())
-
-
-# 色调调整
-# delta： 调整的参数值，取值范围:(-1,1); 该值表示色调增加或者减少的值。
-# adjust_hue_image_tensor = tf.image.adjust_hue(image_tensor, delta=-0.8)
-# # rgb -> hsv -> h+delta,s,v -> rgb
-# print("新的数据形状:{}".format(np.shape(adjust_hue_image_tensor.eval())))
-# show_image(adjust_hue_image_tensor.eval())
-
-
-# 饱和度调整
-# saturation_factor： 饱和度系数值
-# rgb -> hsv -> h,s*saturation_factor,v -> rgb
-# adjust_saturation_image_tensor = tf.image.adjust_saturation(image_tensor, saturation_factor=20)
-# print("新的数据形状:{}".format(np.shape(adjust_saturation_image_tensor.eval())))
-# show_image(adjust_saturation_image_tensor.eval())
-
-
-# 对比度调整(在每一个通道上，让通道上的像素值调整)
-# 底层计算：(x-mean) * contrast_factor + mean
-# adjust_contrast_image_tensor = tf.image.adjust_contrast(image_tensor, contrast_factor=100)
-# print("新的数据形状:{}".format(np.shape(adjust_contrast_image_tensor.eval())))
-# show_image(adjust_contrast_image_tensor.eval())
-
-
-# 图像的校验(要求输出的图像必须是浮点型的)
-# 用途：检出图像信号中的深色部分和浅色部分，并使两者比例增大，从而提高图像的对比度
-# adjust_gamma_image_tensor = tf.image.adjust_gamma(float_image_tensor, gamma=100)
-# print("新的数据形状:{}".format(np.shape(adjust_gamma_image_tensor.eval())))
-# show_image(adjust_gamma_image_tensor.eval())
-
-
-# 图像的归一化API（只能每次对一张图像做归一化操作）
-# per_image_standardization_image_tensor = tf.image.per_image_standardization(image_tensor)
-# print("新的数据形状:{}".format(np.shape(per_image_standardization_image_tensor.eval())))
-# show_image(per_image_standardization_image_tensor.eval())
-
-
-# 给图像加一个噪音
-# noisy_image_tensor = image_tensor + tf.cast(5 * tf.random_normal(shape=[1944, 2054, 3], mean=0, stddev=0.1), tf.uint8)
-# print("新的数据形状:{}".format(np.shape(noisy_image_tensor.eval())))
-# show_image(noisy_image_tensor.eval())
-
-
-# 将上面转换步骤模型图，保存
-# writer = tf.summary.FileWriter("./model/test03", sess.graph)
-# writer.close()
-
-
-# todo 图像保存(基于scipy的相关API做图像处理)
-# from scipy.misc import imsave, imread, imresize, imshow, imfilter, imrotate
-#
-# file_path = "./images/1.png"
-# img = imread(file_path)
-# img = imresize(img, size=(200, 200))
-# imsave('./images/11111.png', img)
-# print(type(img))
-# print(np.shape(img))
-# imsave('./images/test.png', noisy_image_tensor.eval())
-# print('done!!')
+if __name__ == '__main__':
+    config = Config()
+    # s = Samples(config)
+    # s.preprocess_data()
+    #
+    model = Model(config)
+    model.train()
+    model.close()
