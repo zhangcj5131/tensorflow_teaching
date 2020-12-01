@@ -17,16 +17,21 @@ def f1():
             # train_op = optimizer.minimize(loss)
         with tf.variable_scope('optimizer'):
             '''
+            gradient:梯度,
+            variable:对应的参数
+            最后更新后的参数是variable-lr*gradient
             grads_vars=[(gradient, variable),(gradient, variable),------]
             '''
             grads_vars = optimizer.compute_gradients(loss, var_list=[w,b])
             #梯度裁剪,之能用于解决梯度爆炸
             grads_vars_new = grads_vars.copy()
             for i, (gradient, variable) in enumerate(grads_vars_new):
+                #把梯度控制在-5 到 5 之间
                 grads_vars_new[i] = (tf.clip_by_value(gradient, -5, 5),variable)
 
 
             train_op = optimizer.apply_gradients(grads_vars_new)
+            #计算函数偏导数的方法,演示用的,一般不用
             #grads = tf.gradients(ys=loss, xs=[w,b])
 
         with tf.Session() as sess:

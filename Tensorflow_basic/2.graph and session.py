@@ -110,6 +110,7 @@ def test_session2():
     print(a, b, v1, v2, result)
 
     # sess = tf.Session()
+    #tf.InteractiveSession()自动作为默认 session,后面就可以不指定 session 了
     sess = tf.InteractiveSession()
     print(tf.get_default_session())
     print(a.eval())
@@ -118,10 +119,10 @@ def test_session2():
 
 
 if __name__ == '__main__':
-    # test_graph()
+    test_graph()
     # print('---------------')
     # test_graph1()
     # print('---------------')
     # test_graph2()
     # test_session()
-    test_session2()
+    # test_session2()

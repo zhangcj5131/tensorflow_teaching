@@ -58,6 +58,7 @@ class Model:
 
             self.session = tf.Session(config=conf, graph=graph)
             self.tensors = Tensors(config)
+            #这个 saver 对象必须定义在 tensor 后面,否则会报错,因为模型都不存在,saver 不知道保存什么
             self.saver = tf.train.Saver(max_to_keep=2)
             self.file_writer = tf.summary.FileWriter(logdir=config.log_dir, graph=graph)
 
@@ -66,7 +67,9 @@ class Model:
 
             try:
                 # self.saver.restore(self.session, config.save_path)
+                #获得路径
                 dirname = os.path.dirname(config.save_path)
+                #如果模型不存在,ckpt 会是 null,触发空指针异常
                 ckpt = tf.train.get_checkpoint_state(dirname)
                 self.saver.restore(self.session, ckpt.model_checkpoint_path)
                 print('model was successfully restored!')

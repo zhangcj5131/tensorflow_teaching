@@ -5,6 +5,7 @@ import numpy as np
 def my_dropout(x, keep_prob):
     x_shape = x.get_shape()
     print(x_shape)
+    #防止为 0
     keep_prob = tf.maximum(keep_prob, 0.001)
 
     mask = tf.cast(tf.random_uniform(shape=x_shape, minval=0, maxval=1.) < keep_prob, tf.float32)/keep_prob

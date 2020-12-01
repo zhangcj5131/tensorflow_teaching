@@ -170,7 +170,7 @@ class Model:
                         self.tensors.y: samples.ds.validation.labels[:512],
                         self.tensors.keep_prob: 1.
                     }
-                    valid_su, valid_loss, valid_acc = self.session.run([self.tensors.summary_train,
+                    valid_su, valid_loss, valid_acc = self.session.run([self.tensors.summary_valid,
                                                                         self.tensors.loss,
                                                                         self.tensors.acc], feed_dict=feed_dict_valid)
                     self.filewriter_valid.add_summary(valid_su, global_step=step)

@@ -11,6 +11,7 @@ def activation_test():
         output2 = tf.nn.relu6(output)
         output3 = tf.nn.leaky_relu(output)
         alpha = 0.2
+        #这就是 leaky_relu
         output4 = tf.maximum(alpha*output, output)
 
         with tf.Session() as sess:
