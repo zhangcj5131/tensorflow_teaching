@@ -65,14 +65,19 @@ class Samples:
              transforms.RandomHorizontalFlip(), transforms.RandomRotation(20),
              transforms.ToTensor(), transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])]
         )
-        valid_test_transform = transforms.Compose(
-            [transforms.Resize(254), transforms.CenterCrop(224),
-             transforms.ToTensor(), transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])]
+        # 注意,只有测试集做数据增强,验证集和测试集不做数据增强,这里裁剪是中间裁剪
+        valid_transform = transforms.Compose(
+            [transforms.Resize(254), transforms.CenterCrop(224), transforms.ToTensor(),
+             transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])]
+        )
+        test_transform = transforms.Compose(
+            [transforms.Resize(254), transforms.CenterCrop(224), transforms.ToTensor(),
+             transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])]
         )
 
         train_data = datasets.ImageFolder(self.config.train_dir, transform=train_transform)
-        valid_data = datasets.ImageFolder(self.config.valid_dir, transform=valid_test_transform)
-        test_data = datasets.ImageFolder(self.config.test_dir, transform=valid_test_transform)
+        valid_data = datasets.ImageFolder(self.config.valid_dir, transform=valid_transform)
+        test_data = datasets.ImageFolder(self.config.test_dir, transform=test_transform)
 
         '''
         shuffle=True:打乱数据顺序
