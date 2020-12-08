@@ -3,6 +3,7 @@ import tensorflow as tf
 
 def group_BN(x, is_training, group = 8, eps = 1e-3, decay_rate = 0.99, name='group_bn'):
     with tf.variable_scope(name):
+        #由于是在通道的维度上进行 group,所以为了方便,把通道维度提到前面来
         x = tf.transpose(x, [0, 3, 1, 2])
         B, C, W, H = x.get_shape()
         G = min(C, group)
@@ -18,7 +19,8 @@ def group_BN(x, is_training, group = 8, eps = 1e-3, decay_rate = 0.99, name='gro
                                 initializer=tf.ones_initializer(), trainable=False)
 
         def train():
-            #[B, G, 1, 1, 1]
+            #[B, G, 1, 1, 1],在训练的时候,batch_mean, batch_variance是直接使用的,同时也用他们来更新mom_mean和mom_variance
+
             batch_mean, batch_variance = tf.nn.moments(x, axes=[2,3,4],keep_dims=True)
             assign_mean = tf.assign(
                 mom_mean, decay_rate*mom_mean + (1-decay_rate)*batch_mean

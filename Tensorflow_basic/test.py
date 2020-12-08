@@ -5,6 +5,8 @@ import numpy as np
 from glob import glob
 import os
 from torchvision import datasets
+#查看是否安装了 torch:conda list torch
+#如何安装 torch:https://pytorch.org/get-started/locally/
 import torch
 from PIL import Image
 import matplotlib as mpl

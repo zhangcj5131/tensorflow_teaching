@@ -27,6 +27,7 @@ sess = tf.InteractiveSession()
 
 # todo 2. 读取图像数据
 image_path = "./images/1.png"
+#注意,这是一个 gif 动态图,有专门的方法处理它
 # image_path = "./images/timg.gif"
 
 """
@@ -35,6 +36,7 @@ def read_file(filename, name=None):
 """
 
 file_contents = tf.read_file(image_path)
+#打印图片的具体内容,都是一些 16 进制数据
 print(file_contents.eval())#sess.run(file_contents)
 print('--' * 40)
 
@@ -54,13 +56,17 @@ def decode_image(contents, channels=None, name=None):
         3：使用RGB三通道读取数据
         4：使用RGBA四通道读取数据(R：红色，G：绿色，B：蓝色，A：透明度)
 """
-#image_tensor = tf.image.decode_image(contents=file_contents, channels=3)
+#直接看一下图片的代码
+# image_tensor = tf.image.decode_image(contents=file_contents, channels=3)
 # show_image(image_tensor.eval())
 
+#注意,这个是只解析 png 格式的图片
 image_tensor = tf.image.decode_png(contents=file_contents, channels=3, dtype=tf.uint8)
-# print('原始数据shape is:{}'.format(image_tensor.eval().shape))
+print('原始数据shape is:{}'.format(image_tensor.eval().shape))
 show_image(image_tensor.eval())
 
+
+#这个方法专门处理 gif 格式的动态图
 # image_tensor = tf.image.decode_gif(contents=file_contents)
 # # print(image_tensor)
 # # print(image_tensor.eval())
@@ -84,6 +90,7 @@ def resize_images(images,
               BICUBIC = 2 # 三次插值，一般建议使用BICUBIC，但是运行速度比较慢。效果最好
               AREA = 3 # 使用一个区域的所有颜色的均值作为新的像素值,是 cv2 采用的
     返回的数据类型和输入的images的数据shape格式一致
+    下面三个方法演示了三种不同的缩放图片的算法.大概了解一下
 """
 # resize_image_tensor = tf.image.resize_images(
 #     images=image_tensor, size=(128, 80),
@@ -107,7 +114,7 @@ def resize_images(images,
 def resize_image_with_crop_or_pad(image, target_height, target_width):
     image：需要进行操作的图像tensor对象
     target_height, target_width: 新图像的高度和宽度
-做填充和剪切的时候，是从中心位置开始计算
+做填充和剪切的时候，是从中心位置开始计算,不支持任意位置的剪切
 """
 # crop_or_pad_image_tensor = tf.image.resize_image_with_crop_or_pad(image_tensor,
 #                                                                   target_height=800,
@@ -116,7 +123,7 @@ def resize_image_with_crop_or_pad(image, target_height, target_width):
 # show_image(crop_or_pad_image_tensor.eval())
 
 
-# 从中心位置等比例的剪切
+# 从中心位置等比例的剪切,只支持从中心点剪切,这里剪切 60%
 # central_crop_image_tensor = tf.image.central_crop(image_tensor, central_fraction=0.6)
 # print("central_crop后的数据形状:{}".format(np.shape(central_crop_image_tensor.eval())))
 # show_image(central_crop_image_tensor.eval())
@@ -126,8 +133,8 @@ def resize_image_with_crop_or_pad(image, target_height, target_width):
 """
 def crop_to_bounding_box(image, offset_height, offset_width, target_height,
                          target_width):
-        offset_height：给定从高度那个位置进行剪切，其实给定的是剪切的左上角的像素下标
-        offset_width: 给定从宽度那个维度进行剪切，其实给定的是剪切的左上角的像素下标
+        offset_height：给定从高度这个位置进行剪切，其实给定的是剪切的左上角的像素下标
+        offset_width: 给定从宽度这个维度进行剪切，其实给定的是剪切的左上角的像素下标
 """
 # crop_to_bounding_box_image_tensor = tf.image.crop_to_bounding_box(
 #     image_tensor, 100, 20, 500, 490
@@ -158,7 +165,7 @@ def crop_to_bounding_box(image, offset_height, offset_width, target_height,
 # show_image(transpose_image_tensor.eval())
 
 
-# 旋转（90、180、270、360）
+# 旋转（90、180、270、360）,只支持这四个度的旋转,k=1 就是 90 度
 # random_int = np.random.randint(low=0, high=3)
 # rot90_image_tensor = tf.image.rot90(image_tensor, k=random_int)
 # print("新的数据形状:{}".format(np.shape(rot90_image_tensor.eval())))
@@ -169,10 +176,11 @@ def crop_to_bounding_box(image, offset_height, offset_width, target_height,
 # NOTE: 如果要进行颜色空间的转换，那么必须将Tensor对象中的数据类型转换为float类型
 # NOTE: 对于图像像素点的表示来讲，可以使用0~255的uint8类型的数值表示，也可以使用0~1之间的float类型的数据表示
 # print(image_tensor.eval())
+#做颜色转换的花,一定需要把tensor 转成 float 类型,默认是 int8
 float_image_tensor = tf.image.convert_image_dtype(image_tensor, dtype=tf.float32)
 # print(float_image_tensor.eval())
 
-# RGB -> Gray
+# RGB -> Gray,彩色转灰度图
 gray_image_tensor = tf.image.rgb_to_grayscale(float_image_tensor)
 # print("新的数据形状:{}".format(np.shape(gray_image_tensor.eval())))
 # show_image(gray_image_tensor.eval())

@@ -54,15 +54,18 @@ def brightness_images(image):
     :return:
     """
     # 颜色通道转换   BGR ----> HSV(Hue 色调， Saturation 饱和度  V  亮度)
+    #v 就是亮度,我们可以通过改 v 来修改亮度
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-    #图片默认是 int8
+    #图片默认是 int8,这里转成 float64
     image1 = np.array(hsv, dtype=np.float64)
     random_bright = 0.5 + np.random.uniform()  # 随机调亮 或者调暗的随机数生成 0:1.5
     print(random_bright)
+    #对亮度进行随机修改
     image1[:, :, 2] = image[:, :, 2] * random_bright
 
     # 对于大于255的 进行裁剪。
     image1[:, :, 2][image1[:, :, 2] > 255] = 255
+    #数据类型必须改回来
     image1 = np.array(image1, dtype=np.uint8)
     rgb = cv2.cvtColor(image1, cv2.COLOR_HSV2RGB)
     return rgb
@@ -100,6 +103,7 @@ def trans_image(image, hori_range, vertical_range):
     :param vertical_range:
     :return:
     """
+    #只在水平和垂直两个维度上移动
     rows, cols, channels = image.shape
     # 定义平移量 tr_x 代表水平平移的量， tr_y 代表垂直平移的量
     tr_x = hori_range*np.random.uniform() - hori_range/2
@@ -134,12 +138,13 @@ def vertical_hrizontal_shift():
 def crop_img_and_resize(image):
     shape = image.shape
     print(shape)
-    #从图片的宽和高纬度上截取一部分
+    #从图片的宽和高纬度上截取一部分,这里 100 可以设置为一个合适的随机数
     image1 = image[100:shape[0], 100:shape[1]]
 
     # 需要重新resize 缩放
     new_col = 224
     new_row = 224
+    #interpolation=cv2.INTER_AREA是一个图片放大的算法
     image1 = cv2.resize(image1, (new_col, new_row), interpolation=cv2.INTER_AREA)
     return image1
 
@@ -198,11 +203,12 @@ def rotation_img(image_src):
     :param image_src:
     :return:
     """
+    #旋转只能在前两个维度上进行
     rows, cols = image_src.shape[:2]
     # 定义一个随机旋转的随机数
     rotation_randomint = np.random.randint(low=180)
     print(rotation_randomint)
-    # 定义一个旋转映射的矩阵。scale:缩放比例
+    # 定义一个旋转映射的矩阵。scale:缩放比例,(cols/2, rows/2)是旋转中心,这里选择图片的中心
     rotate_M = cv2.getRotationMatrix2D((cols/2, rows/2), rotation_randomint, scale = 1.0)
     #borderValue是对边缘填充的颜色,不写的花,默认边缘填充黑色
     rotated_img = cv2.warpAffine(image_src, rotate_M, (cols, rows), borderValue=[255, 255, 255])

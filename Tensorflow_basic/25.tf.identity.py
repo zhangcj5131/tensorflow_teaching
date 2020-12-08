@@ -4,12 +4,12 @@ import tensorflow as tf
 而y=x仅仅是tensor的一个简单赋值，不是定义的op，所以在图中不会形成一个节点，这样该管理器就失效了。
 tf.identity是返回一个一模一样新的tensor的op，这会增加一个新节点到gragh中，这时control_dependencies就会生效，所以第二种情况的输出符合预期。
 '''
-x = tf.Variable(1.0)
+x = tf.Variable(0.0)
 y = tf.Variable(0.0)
 
 #返回一个op，表示给变量x加1的操作
-x_plus_1 = tf.assign_add(x, 1)
-
+# x_plus_1 = tf.assign_add(x, 1)
+x_plus_1 = tf.assign(x, x+1)
 #control_dependencies的意义是，在执行with包含的内容（在这里就是 y = x）前，
 #先执行control_dependencies参数中的内容（在这里就是 x_plus_1），这里的解释不准确，先接着看。。。
 with tf.control_dependencies([x_plus_1]):

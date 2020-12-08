@@ -8,7 +8,7 @@ from tensorflow.examples.tutorials.mnist import input_data
 mnist = input_data.read_data_sets("./data", one_hot=True, reshape=False)
 
 def conv_layer(layer, layer_i):
-    strides = 2 if layer_i==3 else 1
+    strides = 2 if layer_i%3 == 0 else 1
     layer = tf.layers.conv2d(layer, layer_i*4, 3, strides, 'same', activation=tf.nn.relu)
     return layer
 

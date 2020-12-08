@@ -128,6 +128,7 @@ class Tensors:
 
                 logits = tf.matmul(self.x, w) + b#None, 3
                 y_pred = tf.math.argmax(logits, axis = 1, output_type=tf.int32)
+                #注意:使用sparse_softmax_cross_entropy_with_logits的花,label 不需要 onehot 编码
                 self.loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(
                     labels=self.y, logits=logits
                 ))
